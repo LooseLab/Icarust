@@ -1,0 +1,95 @@
+syntax="proto3";
+
+package minknow_api.instance;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+
+// import "minknow_api/acquisition.proto";
+// import "minknow_api/device.proto";
+// import "minknow_api/protocol.proto";
+service InstanceService {
+    // Current version information includes:
+    // - Minknow version
+    // - Protocols version
+    // - Distribution version
+    rpc get_version_info (GetVersionInfoRequest) returns (GetVersionInfoResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+}
+
+message GetVersionInfoRequest {
+
+}
+
+message GetVersionInfoResponse {
+    
+    message MinknowVersion {
+        int32 major = 1;
+        int32 minor = 2;
+        int32 patch = 3;
+        string full = 4;
+    }
+
+    // What minknow version is installed. Split into major, minor and patch versions
+    // Also includes the full version as a string, which contain the major, minor and patch numbers
+    // as well as if the version is pre-release version (-pre), whether it is a release candidate (-rc#)
+    // or whether it is a variant version (i.e. for conferences) (-variant). For non-release builds it also 
+    // includes the hash of the commit it is based on, and whether the working copy is different from that has (-dirty)
+    MinknowVersion minknow = 1;
+
+    // The protocols version specifies what version of bream is installed.
+    // By default is set to '0.0.0.0', but will otherwise be set to a Bream release version.
+    string protocols = 2;
+
+    // Describes the distribution that this MinKNOW installation is part of, ususally
+    // this will be the Metapackage version number/identity, this will be "unknown"
+    // if the distribution-version hasn't been set. This information is also communicated
+    // in the Manager's DaemonMessage in daemon.proto
+    string distribution_version = 3;
+
+    enum DistributionStatus {
+        UNKNOWN  = 0; // The distribution status is unknown or can not be determined
+        STABLE   = 1; // Released software in that same configuration in which
+                      // it was distributed.
+        UNSTABLE = 2; // Pre-release or release-candidate software that has not
+                      // been fully tested, but has not been modified from how it
+                      // was distributed.
+        MODIFIED = 3; // Some or all components have been replaced after distribution
+    }
+    // Indicates if the MinKNOW distribution including components such as Bream
+    // are stable, unstable or have been modified.
+    DistributionStatus distribution_status = 4;
+
+    // The configuration version specifies what version of ont-configuration (wanda) is installed.
+    // By default is set to '0.0.0.0', but will otherwise be set to a Wanda release version.
+    // 
+    // Since 3.6
+    string configuration = 5;
+
+    // Note that InstallationType is duplicated in manager.proto, the two definitions should be kept in sync.
+    enum InstallationType {
+        // For internal release. production.proto will be enabled for this type
+        ONT = 0;
+
+        // For customer releases
+        NC = 1;
+
+        // For production release. production.proto will be enabled for this type
+        PROD = 2;
+
+        // For Q releases (nanopore long term support release)
+        Q_RELEASE = 3;
+
+        // Oxford Nanopore Diagnostic
+        OND_RELEASE = 4;
+    }
+
+    // Indicates what installation type minknow was installed as. Certain installation
+    // types may turn features on or off depending on the type. For example,
+    // for ont and prod installs, the production.proto service will be enabled
+    // to make calls such as writing to the eeprom
+    //
+    // Since 4.1
+    InstallationType installation_type = 6;
+}

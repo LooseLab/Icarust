@@ -1,0 +1,51 @@
+syntax="proto3";
+
+package minknow_api.log;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+
+service LogService {
+      // Send a log message to any listeners of messages (see get_user_messages)
+    //
+    // Any historical user messages are first sent to the caller,
+    //
+    // Since 1.11
+    rpc send_user_message(SendUserMessageRequest) returns (SendUserMessageResponse) {}
+}
+
+
+enum Severity {
+    // A debugging message
+    MESSAGE_SEVERITY_TRACE = 0;
+
+    // An informative user message
+    MESSAGE_SEVERITY_INFO = 1;
+
+    // A warning message
+    MESSAGE_SEVERITY_WARNING = 2;
+
+    // An error message
+    MESSAGE_SEVERITY_ERROR = 3;
+}
+
+
+message SendUserMessageRequest {
+    // The severity of the message to send
+    //
+    // note: TRACE messages cannot be sent using this interface (will throw an error).
+    Severity severity = 2;
+
+    // A short unique textual identifier for the message
+    // Used to identify the message for translation purposes
+    string identifier = 3;
+
+    // The user message to send to any listeners.
+    string user_message = 1;
+
+    // Any extra data associated with the user message, as a map from key to data.
+    map<string, string> extra_data = 4;
+}
+
+message SendUserMessageResponse {
+}

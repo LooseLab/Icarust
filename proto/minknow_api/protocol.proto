@@ -1,0 +1,310 @@
+syntax="proto3";
+
+package minknow_api.protocol;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+
+import "minknow_api/basecaller.proto";
+import "minknow_api/device.proto";
+import "minknow_api/protocol_settings.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+service ProtocolService {
+    // Returns the name and run id of the currently running protocol.
+    //
+    // Will fail with FAILED_PRECONDITION if there is no protocol running
+    //
+    // Since 1.11
+    rpc get_current_protocol_run (GetCurrentProtocolRunRequest) returns (ProtocolRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+}
+
+message ProtocolInfo {
+    message TagValue {
+        oneof tag_value {
+            string string_value = 1;
+            bool bool_value = 2;
+            int64 int_value = 3;
+            double double_value = 4;
+            string array_value = 5;
+            string object_value = 6;
+        }
+    }
+    message TagExtractionResult {
+        bool success = 1;
+        string error_report = 2;
+    }
+
+    string identifier = 1;
+    map<string,TagValue> tags = 2;
+    string name = 3;
+    TagExtractionResult tag_extraction_result = 4;
+}
+
+message GetCurrentProtocolRunRequest {
+
+}
+
+message GetCurrentProtocolRunResponse {
+    ProtocolRunInfo run_info = 3;
+}
+
+enum ProtocolState {
+    // The protocol is still running.
+    PROTOCOL_RUNNING = 0;
+
+    // The protocol is waiting for the device to reach temperature
+    //
+    // Since 1.15
+    PROTOCOL_WAITING_FOR_TEMPERATURE = 4;
+
+    // Occurs when data protocol has stopped (either from a explicit rpc request or the script naturally ended)
+    // and data is still being processed (albacore is still in catchup and processing reads).
+    PROTOCOL_WAITING_FOR_ACQUISITION = 5;
+
+    // The protocol finished on its own and did not report an error.
+    //
+    // This is determined by the protocol process exiting with a zero exit code.
+    PROTOCOL_COMPLETED = 1;
+
+    // The protocol was terminated by the user.
+    PROTOCOL_STOPPED_BY_USER = 2;
+
+    // The protocol finished on its own and reported an error.
+    //
+    // This is determined by the protocol process exiting with a non-zero exit code or because of a
+    // signal. Often, this will be because an exception was raised in the Python code and not
+    // caught, but could also indicate that the Python process crashed or was killed by some
+    // mechanism other than by MinKNOW.
+    PROTOCOL_FINISHED_WITH_ERROR = 3;
+
+    // The protocol was terminated because the sequencing device encountered an error.
+    PROTOCOL_FINISHED_WITH_DEVICE_ERROR = 6;
+
+    // The protocol was terminated because MinKNOW could not send telemetry to start acquisition.
+    PROTOCOL_FINISHED_UNABLE_TO_SEND_TELEMETRY = 7;
+}
+
+enum ProtocolPhase {
+    // The protocol has not reported what phase it is in.
+    PHASE_UNKNOWN = 0;
+
+    // The protocol is calibrating, or performing other initialisation tasks.
+    PHASE_INITIALISING = 1;
+
+    // The protocol is sequencing.
+    PHASE_SEQUENCING = 2;
+
+    // The protocol is setting up to perform a mux scan.
+    PHASE_PREPARING_FOR_MUX_SCAN = 3;
+
+    // The protocol is performing a mux scan. This checks whether to switch channels to different
+    // wells (muxes) in order to improve and maintain sequencing performance.
+    PHASE_MUX_SCAN = 4;
+
+    // The protocol is paused.
+    //
+    // When the protocol is resumed, it is likely to enter the PHASE_RESUMING state before moving to
+    // another state (such as PHASE_SEQUENCING).
+    PHASE_PAUSED = 5;
+
+    // The protocol is in the process of pausing.
+    //
+    // It should move into PHASE_PAUSED within a short time.
+    PHASE_PAUSING = 6;
+
+    // The protocol is in the process of resuming from a paused state.
+    //
+    // It should move into another phase, such as PHASE_SEQUENCING or PHASE_PREPARING_FOR_MUX_SCAN,
+    // in a short time.
+    PHASE_RESUMING = 7;
+}
+
+message Epi2meWorkflowReference {
+    // The unique identifier for a workflow ( unique to a specific instance of epi2me )
+    int64 id = 1;
+
+    // URL that links to the workflow report. Syntax for a local workflow: file:// otherwise: http(s)://
+    string url = 2;
+}
+
+message AssociatedPostProcessingAnalysis {
+    // Id of analysis if this has been triggered (otherwise empty).
+    string started_id = 1;
+
+    // Start request for analysis
+    basecaller.StartRequest start_request = 2;
+}
+
+message PlatformQcResult {
+    // The flow cell id that the pqc was performed for
+    string flow_cell_id = 1;
+
+    // Whether the flow cell passed the platform qc check
+    bool passed = 2;
+
+    // Total number of pores that were found on the flow cell, across all muxes.
+    uint32 total_pore_count = 3;
+}
+
+message BarcodeUserData {
+    enum SampleType {
+        // The barcode sample is a real sample being tested.
+        test_sample = 0;
+
+        // The barcode sample is a control which is expected to result in positive identification.
+        positive_control = 1;
+
+        // The barcode sample is a control which is expected to result in negative identification.
+        negative_control = 2;
+
+        // Indended to show that a result has not occured due to contamination.
+        no_template_control = 3;
+
+        // Separate positive controls for when kits expect 2.
+        positive_control_1 = 4;
+
+        // Separate positive controls for when kits expect 2.
+        positive_control_2 = 5;
+    }
+
+    // Barcode name the user data applies to, eg: "barcode02"
+    string barcode_name = 1;
+
+    // Lamp barcode id the user data applies to, eg: "FIP04"
+    string lamp_barcode_id = 2;
+
+    // User defined string alias for the barcode.
+    string alias = 3;
+
+    // Sample type grouping for the barcode.
+    SampleType type = 4;
+}
+
+message ProtocolRunUserInfo {
+    // The group which the experiment should be held in.
+    //
+    // note: This value could be unset if a user did not specify a group_id when starting the protocol.
+    google.protobuf.StringValue protocol_group_id = 1;
+
+    // sample_id created by the user
+    google.protobuf.StringValue sample_id = 2;
+
+    // User supplied info for barcodes
+    repeated BarcodeUserData barcode_user_info = 3;
+}
+
+message ProtocolRunInfo {
+    // The unique identifier assigned to this run.
+    //
+    // This is guaranteed to be made of ASCII characters, and at most 40 characters. It is globally
+    // unique across all protocols runs on all MinKNOW instances.
+    string run_id = 1;
+
+    // The identifier of the protocol, as passed to start_protocol().
+    string protocol_id = 2;
+
+    // The arguments passed to start_protocol().
+    repeated string args = 3;
+
+    // Output location for protocol data (eg. reads).
+    //
+    // Since 1.16.
+    string output_path = 11;
+
+    // Indicates the current state of the protocol run.
+    ProtocolState state = 4;
+
+    // The phase of the protocol.
+    //
+    // This is the state reported by the protocol. If the protocol has not reported any state, it
+    // will be PHASE_UNKNOWN. Completed protocols also report PHASE_UNKNOWN.
+    //
+    // Note that clients should handle unexpected values of this field gracefully. This can happen
+    // if new phases are added but the client is still using an older version of the API
+    // specification.
+    //
+    // Since 4.4.
+    ProtocolPhase phase = 16;
+
+    // The last time the phase changed.
+    //
+    // This can be used to determine how long the protocol has been in the current phase.
+    //
+    // NB: This will not be set if the phase is PHASE_UNKNOWN.
+    //
+    // Since 4.4.
+    google.protobuf.Timestamp last_phase_change = 17;
+
+    // Whether the protocol can be paused.
+    //
+    // Not all protocols can be paused, and cannot be paused in all phases.
+    //
+    // Note that if this is true and the phase is PHASE_PAUSING or PHASE_PAUSED, pausing will not
+    // actually do anything.
+    //
+    // Since 4.4.
+    bool can_pause = 18;
+
+    // Whether a mux scan can be triggered for the protocol.
+    //
+    // Since 4.4.
+    bool can_trigger_mux_scan = 19;
+
+    // When the protocol was started (UTC).
+    google.protobuf.Timestamp start_time = 5;
+
+    // When the protocol script terminated (UTC).
+    //
+    // Unset if the protocol script is still running.
+    //
+    // Note that the protocol may still run until final acquisiton completes.
+    google.protobuf.Timestamp script_end_time = 9;
+
+    // When the protocol terminated (UTC), indicating both the
+    // protocol script and the final acquisition were completed.
+    //
+    // Unset if the protocol is still running.
+    google.protobuf.Timestamp end_time = 6;
+
+    // A list of acquisition periods started whilst this protocol was running.
+    //
+    repeated string acquisition_run_ids = 7;
+
+    // User specified information associated with the protocol at start time.
+    //
+    // Since 1.11.
+    ProtocolRunUserInfo user_info = 8;
+
+    // List of workflows from epi2me associated with this protocol
+    //
+    // Since 1.15.
+    repeated Epi2meWorkflowReference epi2me_workflows = 10;
+
+    // Information about the device a protocol was started with
+    //
+    // Since 3.4
+    device.GetDeviceInfoResponse device = 12;
+
+    // Information about the flow cell a protocol was started with
+    //
+    // Since 3.4
+    device.GetFlowCellInfoResponse flow_cell = 13;
+
+    // Meta-info about the protocol
+    //
+    // Since 3.8
+    ProtocolInfo meta_info = 14;
+
+    // List of scheduled post processing analysis tasks
+    repeated AssociatedPostProcessingAnalysis associated_post_processing_analysis = 15;
+
+    // Platform QC result. Set by bream by calling `set_platform_qc_result()`. 
+    // Possible to not be set (e.g. not a pqc run)
+    PlatformQcResult pqc_result = 20;
+
+}
+

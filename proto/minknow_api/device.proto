@@ -1,0 +1,267 @@
+syntax="proto3";
+
+package minknow_api.device;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+
+
+service DeviceService {
+        // Get information about the flow cell (if any).
+    //
+    // This provides information about the flow_cell attached to the device (described by
+    // get_device_info()), if any.
+    rpc get_flow_cell_info (GetFlowCellInfoRequest) returns (GetFlowCellInfoResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // The calibration measurements being used by MinKNOW.
+    //
+    // Calibration describes how to convert from the raw ADC (analog-to-digital converter) values
+    // from the device into picoamps (pA).
+    //
+    // To get a pA value from an ADC value the following function is applied::
+    //
+    //      pA_current = (adc_current + offset) / (digitisation / pA_range)
+    //
+    // The digitisation is the range of possible ADC values. It is the same for all channels.
+    //
+    // If there is no calibration (including if it was cleared with ``clear_calibration()`` or
+    // invalidated because of device settings changes), this will return the identity calibration:
+    // all offsets will be 0, and the pA ranges will be the same as the digitisation.
+    rpc get_calibration (GetCalibrationRequest) returns (GetCalibrationResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+}
+
+message GetDeviceInfoRequest {}
+
+message GetDeviceInfoResponse {
+    enum DeviceType {
+        MINION = 0;
+        GRIDION = 2;
+        PROMETHION = 3;
+        MINION_MK1C = 4;
+        TRAXION = 5;
+    }
+
+    // A unique identifier for the device.
+    //
+    // This is the identifier of the device MinKNOW was started for. It will only communicate
+    // with this device.
+    //
+    // Note that simulated device IDs are only unique for this host, not globally.
+    //
+    // This value will be set even if the device is not currently connected (assuming MinKNOW
+    // was started by the manager service).
+    string device_id = 1;
+
+    // The type of the device.
+    DeviceType device_type = 2;
+
+    // Whether the device is simulated.
+    //
+    // If this is true, there is no physical device - MinKNOW is simluating it. If it is false,
+    // MinKNOW will be acquiring data from a real device.
+    bool is_simulated = 3;
+
+    // The maximum number of channels supported by the device.
+    //
+    // Each channel provides a signal from the device. For example, a MinION supports up to 512
+    // channels, and so can provide 512 simultaneous streams of data.
+    //
+    // This value is fixed for a given device type. Note, however, that a flow cell might be attached
+    // that has a smaller number of channels.
+    uint32 max_channel_count = 4;
+
+    // The maximum number of wells connected to each channel.
+    //
+    // A well is a discrete location on the device where sensing can take place. Normally, each well
+    // should have a single nanopore in it.
+    //
+    // For example, a MinION supports up to 4 wells per channel, allowing for 2048 wells in total.
+    // So the value of this for a MinION will be 4.
+    //
+    // This value is fixed for a given device type. Note, however, that a flow cell might be attached
+    // that has a smaller number of wells on each channel.
+    uint32 max_wells_per_channel = 5;
+
+    // Whether the set_temperature() method can be expected to work.
+    //
+    // On some systems, not all connected devices have the ability to control their own temperature,
+    // as temperature controls are managed in groups. If this field is true, this device can control
+    // its own temperature. If it it false, it cannot, and the temperature will be maintained at a
+    // pre-determined temperature.
+    bool can_set_temperature = 6;
+
+    // The range of uncalibrated data values.
+    //
+    // This is the number of distinct signal values that can be produced by the device's analog to
+    // digital converter (ADC).
+    uint32 digitisation = 7;
+
+    // Firmware versions and serial-numbers of components associated with this device
+    //
+    // Depending on the hardware, there may be several components associated with
+    // this device, each with their own firmware version and serial-number. Not all
+    // components have serial-numbers.
+    message ComponentVersion {
+        // Description of the component that has firmware
+        string component = 1;
+
+        // The firmware version, if this cannot be determined for a component where
+        // the firmware version would usually be available, this will contain
+        // "Unknown"
+        string version = 2;
+
+        // The serial-number of a component. If this in not applicable to the
+        // type of component or cannot be read at the current time, then this
+        // field will be blank.
+        string serial_number = 3;
+    }
+    repeated ComponentVersion firmware_version = 10;
+}
+
+message GetCalibrationRequest {
+    // The first channel to get calibration data for.
+    //
+    // This should normally be 1.
+    uint32 first_channel = 1;
+
+    // The last channel included in calibration data.
+    //
+    // This should normally be the channel count returned by
+    // :meth:`get_flow_cell_info`.
+    uint32 last_channel = 2;
+}
+
+message GetCalibrationResponse{
+    // The range of possible ADC values that can be produced by the device.
+    //
+    // This is the same as the digitisation value returned by the
+    // :meth:`DeviceService.get_device_info` RPC. It is included here for convenience.
+    uint32 digitisation = 1;
+
+    // The ADC value adjustment to reach 0pA on each channel.
+    //
+    // This is ``-x``, where ``x`` is the (mean) ADC value at 0pA.
+    repeated float offsets = 2;
+
+    // The range of possible pA values that can be produced on each channel.
+    //
+    // The change in pA represented by a change of 1 ADC can be calculated by dividing the
+    // digitisation by this value.
+    repeated float pa_ranges = 3;
+
+    // Find if there is a stored calibration, or if the returned response is empty.
+    //
+    // Since 1.12
+    bool has_calibration = 4;
+}
+
+message GetFlowCellInfoRequest {}
+
+message GetFlowCellInfoResponse {
+    // Whether there is a flow cell present.
+    //
+    // If both this and has_adapter are false, none of the other fields will contain useful
+    // information.
+    bool has_flow_cell = 1;
+
+    // The number of channels currently supported by the device.
+    //
+    // This may be smaller than the ``max_channel_count`` value returned by get_device_info(),
+    // depending on the attached flow cell.
+    uint32 channel_count = 2;
+
+    // The number of wells currently supported by the device.
+    //
+    // This may be smaller than the ``max_wells_per_channel`` value returned by get_device_info(),
+    // depending on the attached flow cell.
+    uint32 wells_per_channel = 3;
+
+    // The unique identifier for the flow cell.
+    //
+    // This should be same as the value printed onto the flow cell casing. Not all flow cells will
+    // have the flow cell ID recorded in a way that MinKNOW can read. In those cases, this will be an
+    // empty string, even though the user may be able to see a printed identifier on the flow cell.
+    string flow_cell_id = 4;
+
+    // The unique identifier for the ASIC (formatted as string).
+    //
+    // This is a value uniquely identifying the ASIC embedded in the flow cell. It will
+    // always be set when a flow cell is present.
+    //
+    // The intended use for this is to track the identity of the asic in the flow cell, eg. for
+    // displaying to users during production of chips.
+    //
+    // Caveats:
+    //
+    // * This value will not mean anything to a customer.
+    // * There is no guarantee that this field will contain the same identifier across
+    //   MinKNOW versions, even with the same flow cell.
+    // * An ASIC can be recycled into a new flow cell, so this identifier may be re-used in the
+    //   future (although it can be considered unique for the duration of a protocol run).
+    string asic_id_str = 13;
+
+    // The product code for the flow cell.
+    //
+    // This should be the code displayed in the shop where the flow cell was bought. Not all
+    // flow cells will have the product code recorded in a way that MinKNOW can read. In those cases,
+    // this will be an empty string.
+    string product_code = 6;
+
+    // A unique identifier for the flow cell, which the user can specify.
+    //
+    // In the event a flow cell does not have an eeprom, this field contains data input by the user
+    // using set_flow_cell_info to record required data.
+    //
+    // Only alpha-numeric, space, dash and underscore characters are allowed in this field.
+    //
+    // Since 1.12
+    string user_specified_flow_cell_id = 7;
+
+    // A product code for the flow cell, which the user can specify.
+    //
+    // This should be the code displayed in the shop where the flow cell was bought. Not all
+    // flow cells have an eeprom, in the event they don't, the user can specify using this id using
+    // set_flow_cell_info.
+    //
+    // Since 1.12
+    string user_specified_product_code = 8;
+
+    // Whether there is a flongle adapter.
+    //
+    // If this is true, the adapter_id, channel_count and wells_per_channel fields should all
+    // provide useful information, even if has_flow_cell is false.
+    bool has_adapter = 9;
+
+    // The unique identifier of an attached flongle adatper.
+    //
+    // This should be same as the value printed onto the adapter casing.
+    string adapter_id = 10;
+
+    // Used to make the field nullable, since the null value is not protobuf's default.
+    oneof temperature_offset_nullable {
+
+        // The temperature offset for the flow cell, returned as an offset in degrees Celsius.
+        //
+        // This offset specifies a correction to be applied to ASIC temperature.
+        // If multiple ASIC temperatures are available from the device, applies to the mean temperature.
+        //
+        // Since 1.14
+        float temperature_offset = 11;
+    }
+
+    // The version of the ASIC contained in the flowcell (if specified by the hardware).
+    //
+    // This can be used to determine if the hardware should support certain features
+    // added to only newer ASICs.
+    //
+    // Possible values include: "IA02C", "IA02D", or if the value is not readable on the
+    // current hardware an empty string is returned.
+    //
+    // Since 1.14
+    string asic_version = 12;
+}
