@@ -1,0 +1,216 @@
+syntax="proto3";
+
+package minknow_api.data;
+
+option java_package = "com.nanoporetech.minknow_api";
+option objc_class_prefix = "MKAPI";
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+
+service DataService {
+    // Get live reads sent in order to control sequencing behaviour.
+    //
+    // This method sends current reads (reads that are currently in the sequencer) to the user along
+    // with live analysis data in order for real time decisions to be made.
+    //
+    // The method provides two streams:
+    //
+    // GetLiveReadsRequest stream:
+    //      Sent by the user, provides MinKNOW with actions to take on current reads, actions
+    //      taken are sumarised and sent back to the user in the GetLiveReadsResponse stream.
+    // GetLiveReadsResponse stream:
+    //      Sent to the user, contains a stream of ongoing sequencing information, sent as
+    //      regularly as possible, with information on reads in progress, and feedback on actions
+    //      taken on the data.
+    //
+    // note: This method operates on read chunks in MinKNOW, and will send at minimum, 1 read
+    // chunk to the user. In order to reduce latency on the method, tune the following options:
+    //
+    // The raw chunk size data is processed in minknow (specified in samples):
+    //      app_conf/hyperstream.raw_data_intermediate.size
+    //      app_conf/hyperstream.raw_meta_data_intermediate.size
+    //
+    // The maximum read chunk size - changing the size read chunks are processed in minknow:
+    //      analysis_conf/read_detection.break_reads_after_seconds
+    //
+    rpc get_live_reads(stream GetLiveReadsRequest) returns (stream GetLiveReadsResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+}
+
+
+message GetLiveReadsRequest {
+    enum RawDataType {
+        // Don't change the previously specified setting for raw data sent with live reads
+        // note: If sent when there is no last setting, NONE is assumed.
+        KEEP_LAST = 0;
+        // No raw data required for live reads
+        NONE = 1;
+        // Calibrated raw data should be sent to the user with each read
+        CALIBRATED = 2;
+        // Uncalibrated data should be sent to the user with each read
+        UNCALIBRATED = 3;
+    }
+
+    message UnblockAction {
+        // Duration of unblock in seconds.
+        double duration = 1;
+    }
+
+    message StopFurtherData {}
+
+    message Action {
+        string action_id = 1;
+        // Channel name to unblock
+        uint32 channel = 2;
+
+        // Identifier for the read to act on.
+        //
+        // If the read requested is no longer in progress, the action fails.
+        oneof read {
+            string id = 3;
+            uint32 number = 4;
+        }
+
+        oneof action {
+            // Unblock a read and skip further data from this read.
+            UnblockAction unblock = 5;
+
+            // Skip further data from this read, doesn't affect the read data.
+            StopFurtherData stop_further_data = 6;
+        }
+    }
+
+    message StreamSetup {
+        // The first channel (inclusive) to return data for.
+        //
+        // Note that channel numbering starts at 1.
+        uint32 first_channel = 1;
+
+        // The last channel (inclusive) to return data for.
+        //
+        // Note that channel numbering starts at 1.
+        uint32 last_channel = 2;
+
+        // Specify the type of raw data to retrieve
+        RawDataType raw_data_type = 3;
+
+        // Minimum chunk size read data is returned in.
+        uint64 sample_minimum_chunk_size = 4;
+
+        // Maximum read length MinKNOW will attempt to unblock
+        // reads beyond this length will not be unblocked when Action's request,
+        // instead minknow will skip any further data from the read.
+        oneof max_unblock_read_length {
+            // Maximum read length MinKNOW will attempt to unblock (in samples).
+            //
+            // A value of 0 will cause minknow to unblock reads of any length.
+            // 
+            uint64 max_unblock_read_length_samples = 5;
+
+            // Maximum read length MinKNOW will attempt to unblock (in seconds).
+            //
+            // A value of 0.0 will cause minknow to unblock reads of any length.
+            // 
+            double max_unblock_read_length_seconds = 6;
+        }
+    }
+
+    message Actions {
+        repeated Action actions = 2;
+    }
+
+    oneof request {
+        // Read setup request, initialises channel numbers and type of data returned.
+        //
+        // note: Must be specified in the first message sent to MinKNOW. Once MinKNOW
+        // has the first setup message reads are sent to the caller as requested.
+        // The user can then resend a setup message as frequently as they need to in order
+        // to reconfigure live reads - for example by changing if raw data is sent with
+        // reads or not.
+        StreamSetup setup = 1;
+
+        // Actions to take given data returned to the user - can only be sent once the setup
+        // message above has been sent.
+        Actions actions = 2;
+    }
+}
+
+message GetLiveReadsResponse {
+    message ReadData {
+        // The id of this read, this id is unique for every read ever produced.
+        string id = 1;
+
+        // The minknow assigned number of this read
+        //
+        // Read numbers always increment throughout the experiment, and are unique per channel -
+        // however they are not necessarily contiguous.
+        uint32 number = 2;
+
+        // Absolute start point of this read
+        uint64 start_sample = 3;
+
+        // Absolute start point through the experiment of this chunk
+        uint64 chunk_start_sample = 4;
+
+        // Length of the chunk in samples
+        uint64 chunk_length = 5;
+
+        // All Classifications given to intermediate chunks by analysis
+        //
+        // See analysis_configuration.get_read_classifications for how to map these integers to names.
+        repeated int32 chunk_classifications = 6;
+
+        // Any raw data selected by the request
+        //
+        // The type of the elements will depend on whether calibrated data was chosen. The
+        // get_data_types() RPC call should be used to determine the precise format of the data, but
+        // in general terms, uncalibrated data will be signed integers and calibrated data will be
+        // floating-point numbers.
+        bytes raw_data = 7;
+
+        // The median of the read previous to this read.
+        // intended to allow querying of the approximate level of this read, comapred to the last.
+        //
+        // For example, a user could try to verify this is a strand be ensuring the median of the
+        // current read is lower than the median_before level.
+        float median_before = 8;
+
+        // The media pA level of this read from all aggregated read chunks so far.
+        float median = 9;
+    };
+
+    message ActionResponse {
+        string action_id = 1;
+
+        enum Response {
+            SUCCESS = 0;
+            FAILED_READ_FINISHED = 1;
+            FAILED_READ_TOO_LONG = 2;
+        }
+
+        Response response = 2;
+    }
+
+    // The number of samples collected before the first sample included in this response.
+    //
+    // This gives the position of the first data point on each channel in the overall stream of data
+    // being acquired from the device (since this period of data acquisition was started).
+    uint64 samples_since_start = 1;
+
+    // The number of seconds elapsed since data acquisition started.
+    //
+    // This is the same as ``samples_since_start``, but expressed in seconds.
+    double seconds_since_start = 2;
+
+    // In progress reads for the requested channels.
+    //
+    // Sparsely populated as not all channels have new/incomplete reads.
+    map<uint32, ReadData> channels = 4;
+
+    // List of repsonses to requested actions, informing the caller of results to requested
+    // unblocks or discards of data.
+    repeated ActionResponse action_responses = 5;
+}

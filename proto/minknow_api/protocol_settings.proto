@@ -6,7 +6,7 @@ option java_package = "com.nanoporetech.minknow_api";
 option objc_class_prefix = "MKAPI";
 
 import "minknow_api/analysis_configuration.proto";
-
+import "minknow_api/rpc_options.proto";
 
 message ProtocolSetting {
     enum Category {
@@ -84,8 +84,8 @@ message ProtocolSetting {
 
     // Identifier is the unique primary-key for referring to protocol-settings,
     // dependencies refer to other settings via their identifier.
-    string identifier = 2;
-    string display_name = 3;
+    string identifier = 2 [(rpc_required) = true];
+    string display_name = 3 [(rpc_required) = true];
 
     // Optional additional help text for a setting that may be shown to the user if required.
     string help = 16;

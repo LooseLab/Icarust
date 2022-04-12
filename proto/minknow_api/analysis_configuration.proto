@@ -6,17 +6,18 @@ option java_package = "com.nanoporetech.minknow_api";
 option objc_class_prefix = "MKAPI";
 
 import "google/protobuf/wrappers.proto";
-
+import "minknow_api/rpc_options.proto";
 
 service AnalysisConfigurationService {
+
     // Get a map of read classifications mapped to id (used internally in analysis).
     //
     // This will change when the analysis configuration changes.
     rpc get_read_classifications (GetReadClassificationsRequest) returns (GetReadClassificationsResponse) {
         option idempotency_level = NO_SIDE_EFFECTS;
     };
-}
 
+}
 
 message EventDetection {
     // The window size that the tstats are calculated from
@@ -285,7 +286,7 @@ message ResetAnalysisConfigurationRequest {}
 message ResetAnalysisConfigurationResponse {}
 
 message SetAnalysisEnabledStateRequest {
-    bool enable = 1;
+    bool enable = 1 [(rpc_required) = true];
 }
 
 message SetAnalysisEnabledStateResponse {
@@ -529,7 +530,7 @@ message BasecallerConfiguration
 
 message SetBasecallerConfigurationRequest
 {
-    BasecallerConfiguration configs = 1;
+    BasecallerConfiguration configs = 1 [(rpc_unwrap) = true];
 }
 
 message SetBasecallerConfigurationResponse{}

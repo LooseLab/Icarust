@@ -5,7 +5,10 @@ package minknow_api.manager;
 option java_package = "com.nanoporetech.minknow_api";
 option objc_class_prefix = "MKAPI";
 
+import "minknow_api/rpc_options.proto";
+import "minknow_api/device.proto";
 import "minknow_api/instance.proto";
+import "google/protobuf/timestamp.proto";
 
 service ManagerService {
     // Get information about the machine running MinKNOW.
@@ -17,7 +20,7 @@ service ManagerService {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
 
-        // List all known positions where flow cells can be inserted.
+    // List all known positions where flow cells can be inserted.
     //
     // Provides a snapshot of places where users can insert flow cells. It has a streamed response
     // in case there are too many positions to fit into a single response, but normally there should
@@ -44,6 +47,10 @@ service ManagerService {
     rpc get_version_info (GetVersionInfoRequest) returns (GetVersionInfoResponse) {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
+}
+
+
+message DescribeHostRequest {
 }
 
 message DescribeHostResponse {
@@ -118,9 +125,6 @@ message DescribeHostResponse {
     //
     // Since 4.4
     bool can_sequence_offline = 5;
-}
-
-message DescribeHostRequest {
 }
 
 message FlowCellPosition {
@@ -276,6 +280,85 @@ message FlowCellPositionsResponse {
     repeated FlowCellPosition positions = 2;
 }
 
+message WatchFlowCellPositionsRequest {
+}
+
+// Each flow cell position will first be listed in `additions`. After that, it may appear in
+// `changes` in zero or more messages. Then, it may appear in `removals` once, after which it will
+// either never appear again, or appear in `additions` again (restarting the cycle).
+//
+// No position will ever appear in more than one field in the same response message.
+message WatchFlowCellPositionsResponse {
+    // Flow cell positions that are new (to this call).
+    //
+    // Contains flow cell positions that have not been seen before on this call (or have re-appeared
+    // after being removed).
+    //
+    // Note that a flow cell position being listed here does not mean it is available. In
+    // particular, integrated flow cell positions (eg: on GridIONs or PromethIONs) will always be
+    // provided, so that they can be positioned appropriately.
+    repeated FlowCellPosition additions = 1;
+
+    // Flow cell positions that have changed state.
+    //
+    // Every flow cell position provided in this list will have previously been provided in
+    // `additions`.
+    repeated FlowCellPosition changes = 2;
+
+    // A flow cell position has been removed.
+    //
+    // Note that this can only happen with MinIONs - integrated flow cell positions are never
+    // removed (if they become unavailable, this will be noted in the `changes` field).
+    repeated string removals = 3;
+}
+
+message ResetPositionRequest {
+    // The names of positions to restart.
+    repeated string positions = 3;
+
+    // Force the software to be restarted even when it appears to be in a healthy state (ie:
+    // STATE_RUNNING).
+    bool force = 2;
+}
+
+message ResetPositionResponse {
+}
+
+message BasecallerApiRequest {}
+
+message BasecallerApiResponse {
+    // The port to use to access the minknow_api.basecaller API using the standard gRPC protocol
+    // over TLS
+    uint32 secure = 1;
+    // The port to use to access the minknow_api.basecaller API using the standard gRPC protocol
+    // without TLS
+    uint32 insecure = 2;
+    // The port to use to access the minknow_api.basecaller API using the gRPC-Web protocol over TLS
+    uint32 secure_grpc_web = 3;
+    // DEPRECATED: The port to use to access the minknow_api.basecaller API using the gRPC-Web protocol without
+    // TLS
+    //
+    // From 4.1, this field is now deprecated and will only ever
+    // return a value of 0
+    uint32 insecure_grpc_web = 4;
+}
+
+message GetGuppyInfoRequest {}
+
+message GetGuppyInfoResponse {
+    oneof connection_type {
+        // The port Guppy is listening on.
+        uint32 port = 1;
+
+        // The path to an ipc file Guppy is using.
+        // Use "ipc://<ipc_path>" for a guppy connection string.
+        string ipc_path = 3;
+    }
+
+    // The Guppy server version.
+    string version = 2;
+}
+
 message GetVersionInfoRequest {}
 
 message GetVersionInfoResponse {
@@ -337,4 +420,481 @@ message GetVersionInfoResponse {
     // for ont and prod installs, the production.proto service will be enabled
     // to make calls such as writing to the eeprom
     InstallationType installation_type = 8;
+}
+
+message ListProtocolOutputDirFilesRequest {
+    // Specify the root path to list files from. If the path is left empty, then the base protocol output directory
+    // will be used.
+    //
+    // Note that the path specified HAS to be a descendant of the protocol output directory, otherwise a INVALID_ARGUMENT
+    // error will be returned
+    //
+    // If the path is left empty, and the path specified in the user config doesn't exist, then the NOT_FOUND error code
+    // will be returned
+    string path = 1;
+}
+
+message ListProtocolOutputDirFilesResponse {
+    message DirectoryInfo {
+        string name = 1;
+        int32 directory_count = 2;
+        int32 file_count = 3;
+    }
+
+    // List of sub-directories in the directory specified
+    repeated DirectoryInfo directories = 1;
+
+    // List of files in the directory specified
+    repeated string files = 2;
+
+    // The absolute directory that is being listed within this repsonse
+    string current_listed_path = 3;
+}
+
+message CreateDirectoryRequest {
+    // The path at which to create the directory.
+    //
+    // This must exist, be a directory, and be within the protocol output directory. This can be
+    // determined via calls to list_protocol_output_dir_files().
+    string parent_path = 1;
+
+    // The name of the directory to create.
+    //
+    // This must be a single path component (ie: it cannot contain '/' or '\'). There may be other
+    // restrictions on valid characters, depending on the operating system.
+    string name = 2;
+}
+
+message CreateDirectoryResponse {
+    // The path to the created directory.
+    string path = 1;
+}
+
+// disk-usage information for one file-system
+message FilesystemDiskSpaceInfo {
+    // The name of the file-system
+    string filesystem_id = 1;
+
+    // How much space is left on the file-system
+    uint64 bytes_available = 2;
+
+    // The total capacity of the file-system when empty.
+    uint64 bytes_capacity = 3;
+
+    // A list of what types of file MinKNOW stores on this file-system, eg:
+    // reads, logs, intermediate-files, etc.
+    repeated string file_types_stored = 4;
+
+    // MinKNOW needs this much space to stop experiments. If bytes_available
+    // goes below this number, data could be lost!
+    uint64 bytes_to_stop_cleanly = 5;
+
+    // The amount of space left on the file-system when recommend_alert
+    // was set true.
+    uint64 bytes_when_alert_issued = 6;
+
+    // MinKNOW recommends that you alert someone about the disk-usage
+    bool recommend_alert = 7;
+
+    // MinKNOW recommends that you stop experiments due to disk-usage
+    // concerns
+    bool recommend_stop = 8;
+
+    // Rate of change in bytes_available (per second) +'ve numbers indicate
+    // that bytes_available is decreasing and space is being used
+    // A value of 0 can indicate that this has not applicable or not available.
+    int64 bytes_per_second = 9;
+}
+
+message GetDiskSpaceInfoRequest {
+}
+
+message StreamDiskSpaceInfoRequest {
+    // Disk space information will be streamed with this value determining the
+    // period in seconds between updates.
+    // A period of 0 is invalid
+    uint32 period = 1;
+}
+
+message GetDiskSpaceInfoResponse {
+    repeated FilesystemDiskSpaceInfo filesystem_disk_space_info = 1;
+}
+
+
+message GetBarcodeKitInfoRequest{}
+
+message GetBarcodeKitInfoResponse{
+    message BarcodeKitInfo{
+        bool is_dual = 2;
+        bool is_both_ends = 3;
+    }
+
+    // Map of barcode kit name to barcode kit info
+    map<string, BarcodeKitInfo> barcode_kit_info = 1;
+}
+
+message GetLampKitInfoRequest{}
+
+message GetLampKitInfoResponse{
+    // Lamp kit names
+    repeated string lamp_kits = 2;
+}
+
+
+message GetBarcodeKeysRequest{
+    // Names of barcode kits to obtain barcode names for
+    //
+    // Fails with INVALID_ARGUMENT if any of the requested `barcode_kit_names` are unavailable
+    //
+    repeated string barcode_kit_names = 1;
+
+    // Name of lamp kit to obtain barcode names for.
+    //
+    // Fails with INVALID_ARGUMENT if the requested `lamp_kit_name` is unavailable.
+    string lamp_kit_name = 2;
+}
+
+message GetBarcodeKeysResponse {
+    // Returned barcode keys.
+    repeated string barcode_keys = 1;
+
+    // Returned lamp barcode ids.
+    repeated string lamp_keys = 2;
+
+    // Combined barcode and lamp keys.
+    //
+    // Returned keys are joined strings of all requested barcode kits, giving the caller
+    // a unique string to identify each barcode pair.
+    //
+    // eg. if both a lamp kit + barcode kit are specified, NxM barcode keys are returned:
+    //  - barcode01_lamp01
+    //  - barcode01_lamp02
+    //  - barcode01_lamp03
+    //  - barcode02_lamp01
+    //  - barcode02_lamp02
+    //  - barcode02_lamp03
+    repeated string combined_keys = 3;
+}
+
+// Request message for `ManagerService.get_flow_cell_types`.
+message GetFlowCellTypesRequest {
+}
+
+// Response message for `ManagerService.get_flow_cell_types`.
+message GetFlowCellTypesResponse {
+    // Information about a flow cell type.
+    message Info {
+        // The product code for the flow cell type.
+        //
+        // This is the user-visible name for the flow cell type. It is the name used to order flow
+        // cells, and is also displayed on the packaging.
+        //
+        // While most product codes are 10 characters, be aware that longer product codes can exist
+        // and have been used in the past.
+        //
+        // Example: "FLO-MIN106".
+        string product_code = 1;
+
+        // The connector type of this flow cell type.
+        //
+        // This determines which flow cell positions it is possible to insert this flow cell into.
+        // The connector type for a given flow cell position can be determined using
+        // `minknow_api.device.DeviceService.get_device_state`.
+        //
+        // This will never be ``FCCON_NOT_SET``.
+        device.FlowCellConnectorType connector_type = 2;
+
+        // Indicates that live basecalling is not possible on the flow cell.
+        //
+        // Note that almost all flow cell types can be basecalled on: that is why this indicates a
+        // negative (saving some bytes on the wire by allowing the common case of basecalling being
+        // possible to be omitted entirely).
+        bool cannot_live_basecall = 3;
+    }
+
+    // The flow cell types.
+    repeated Info types = 1;
+}
+
+// Request message for `ManagerService.get_sequencing_kits`.
+message GetSequencingKitsRequest {
+    // The product code of the flow cell that will be used for sequencing.
+    //
+    // Only kits compatible with this flow cell type will be returned (currently, this means that
+    // there is at least one (sequencing or control) protocol that is compatible with both the kit
+    // and this flow cell product code).
+    //
+    // This may also affect the returned information about the kit. For example, if it isn't
+    // possible to basecall on the flow cell, none of the kits will claim to be barcoding capable
+    // (or compatible with any barcoding expansion kits).
+    string flow_cell_product_code = 1;
+}
+
+// Response message for `ManagerService.get_sequencing_kits`.
+message GetSequencingKitsResponse {
+    // Information about a sequencing kit.
+    message Kit {
+        // The product code for the sequencing kit.
+        //
+        // This is the user-visible name for the kit. It is the name used to order kits, and is also
+        // displayed on the packaging.
+        //
+        // While most product codes are 10-15 characters, be aware that longer (or shorter) product
+        // codes can exist.
+        //
+        // Examples: "SQK-LSK109", "OND-SQK-LP0096S".
+        string product_code = 1;
+
+        // Compatible barcoding expansion kits.
+        //
+        // These are indexes into the GetSequencingKitsResponse.barcoding_expansion_kits list. For
+        // example, 0 would indicate the first kit in that list. The values are guaranteed to be
+        // unique and valid indexes for that list.
+        repeated int32 barcoding_expansion_kits = 2;
+
+        // Whether barcoding support is part of the sequencing kit.
+        //
+        // If this is set, barcoding can be done without any expansion kits (and, in fact, barcoding
+        // is an integral part of the kit).
+        bool includes_barcoding = 3;
+
+        // Whether the kit can be used for LamPORE diagnostics.
+        bool lamp_kit = 16;
+
+        // Whether there is a "control" protocol available for this kit.
+        bool has_control_protocol = 4;
+
+        // Indicates there is no sequencing protocol available for this kit.
+        //
+        // This is an unusual situation. If a kit is known about, it should generally have a
+        // sequencing protocol associated with it, and it would be strange to have a control
+        // protocol available but no sequencing protocol.
+        bool no_sequencing_protocol = 17;
+
+        // Indicates that the sequencing kit is one of the most commonly used ones.
+        //
+        // This can be used to display such kits first, or otherwise highlight them in some way.
+        bool frequently_used = 18;
+
+        // The kit can be used with DNA samples.
+        bool dna = 5;
+        // The kit can be used with RNA samples.
+        bool rna = 6;
+        // The kit can be used with samples that have had PCR applied to them.
+        bool pcr = 7;
+        // The kit can be used without a PCR step.
+        bool pcr_free = 8;
+    }
+    // The known sequencing kits.
+    repeated Kit kits = 1;
+
+    // Information about a barcoding expansion kit.
+    //
+    // In the future, this may include compatibility information for dual barcoding, for example.
+    message BarcodingExpansionKit {
+        // The product code for the barcoding expansion kit.
+        //
+        // This is the user-visible name for the kit. It is the name used to order kits, and is also
+        // displayed on the packaging.
+        //
+        // While most product codes are 10 characters, be aware that longer product codes can exist.
+        //
+        // Example: "EXP-NBD104".
+        string product_code = 1;
+    }
+    // The possible barcoding expansion kits.
+    //
+    // These are kits that can be used in combination with certain sequencing kits to add (or
+    // extend) barcoding functionality.
+    repeated BarcodingExpansionKit barcoding_expansion_kits = 2;
+}
+
+message AddSimulatedDeviceRequest {
+    // The name of the position, this must be unique and the correct format:
+    //
+    // For MinIONs and MinION-mk1Cs, "MS" followed by five digits, eg: "MS12345".
+    // For GridIONs, "GS" followed by five digits, eg: "GS12345".
+    //
+    // PromethIONs position-names have no format restriction, but must be unique
+    string name = 1 [(rpc_required) = true];
+}
+
+message AddSimulatedDeviceResponse {
+}
+
+message RemoveSimulatedDeviceRequest {
+    // The name of the simulated device to be removed
+    string name = 1 [(rpc_required) = true];
+}
+
+message RemoveSimulatedDeviceResponse {
+}
+
+message LocalAuthenticationTokenPathRequest {
+}
+
+message LocalAuthenticationTokenPathResponse {
+    // The full path of the local authentication token
+    string path = 1;
+}
+
+message GetAlignmentReferenceInformationRequest {
+    // The full path of the alignment reference.
+    //
+    // Should be a .fasta, or .mmi file.
+    string path = 1;
+}
+
+message GetAlignmentReferenceInformationResponse {
+    // Estimated load time of the reference in seconds.
+    float estimated_load_time_seconds = 1;
+
+    // Estimated size of the reference file in bases.
+    uint64 estimated_reference_size_bases = 2;
+
+    // Does the reference file fit within the recommended live usage memory size?
+    //
+    // This uses an estimate of how much memory a reference may use when running in guppy
+    // and compares to the amount of memory in the sequencer. It does not account for
+    // whether the reference will run in real time.
+    bool recommended_live_usage = 3;
+}
+
+message AssociationDeviceCodeRequest {
+    // The flow cell position to get the association code/key for.
+    //
+    // If this is omitted, the code/key for the sequencing device as a whole is returned.
+    //
+    // Note that this cannot be omitted if MinKNOW is installed on a PC (as opposed to a sequencing
+    // device). It should be omitted if (and only if) the data returned from `describe_host` has
+    // its ``needs_association`` field set to true.
+    //
+    // Passing a integrated flow cell position will return the code/key for the whole sequencing
+    // device.
+    string position_name = 1;
+
+    // Get a code suitable for offline association rather than online association.
+    //
+    // Set this to true if the user will manually enter the code into the customer portal to get an
+    // unlock code. Set to false if the code will be used directly in the online association API.
+    bool offline = 2;
+}
+
+message AssociationDeviceCodeResponse {
+    // The code required to associate the device with an account.
+    //
+    // If the request had `offline` set, this code is suitable for use in the customer portal
+    // offline association page. Otherwise, it is suitable for the online association APIs.
+    string code = 1;
+}
+
+message ApplyOfflineAssociationUnlockCodeRequest {
+    // The flow cell position to unlock.
+    //
+    // This should be set (or not set) to match the corresponding call to
+    // `offline_association_device_code`.
+    string position_name = 1;
+
+    // The unlock code provided by the user.
+    //
+    // This the code given by the customer support portal when the corresponding device code is
+    // entered into the device association page.
+    string unlock_code = 2;
+}
+
+message ApplyOfflineAssociationUnlockCodeResponse {
+    // True if the association was successful (the unlock_code was accepted), false otherwise.
+    bool associated = 1;
+}
+
+message ListDeveloperApiTokensRequest {}
+
+message ListDeveloperApiTokensResponse {
+    message DeveloperApiToken {
+        // Unique ID assigned to the token.
+        string id = 1;
+
+        // User facing name describing the token (guaranteed unique across tokens).
+        string name = 2;
+
+        // Optional expiry of the token.
+        google.protobuf.Timestamp expiry = 3;
+    }
+
+    repeated DeveloperApiToken tokens = 1;
+}
+
+message CreateDeveloperApiTokenRequest {
+
+    // User facing name describing the token.
+    string name = 2;
+
+    // Optional expiry time for the token.
+    google.protobuf.Timestamp expiry = 3;
+}
+
+message CreateDeveloperApiTokenResponse {
+    // Unique ID assigned to the token for identification purposes. Not valid as an authentication token.
+    string id = 1;
+
+    // Created token, available to be used with minknow API's immediately.
+    string token = 2;
+}
+
+message RevokeDeveloperApiTokenRequest {
+    // The id passed back from [CreateDeveloperApiTokenRequest] or [DeveloperApiToken].
+    string id = 1;
+}
+
+message RevokeDeveloperApiTokensResponse {}
+
+enum ExperimentType {
+    // Must not be hidden, experiment type must be "sequencing".
+    SEQUENCING = 0;
+
+    // Must not be hidden, experiment type must be "control".
+    CONTROL = 1;
+
+    // Must not be hidden, experiment type must not be "sequencing" or "control", and if the protocol is in the installation directory, it must also not be "CTC", "platform QC" or "flowcell_plugin".
+    CUSTOM = 2;
+
+    // "hidden" protocols are not returned, but any other compatible protocols are.
+    ALL_EXCEPT_HIDDEN = 3;
+
+    // All protocols, including "hidden" protocols, are returned.
+    ALL_INCLUDING_HIDDEN = 4;
+}
+
+message FindProtocolsRequest {
+    // Find protocols that are compatible with this flow cell product code.
+    //
+    // Set to empty string to find protocols matching all flow cell product codes.
+    string flow_cell_product_code = 1;
+
+    // Limit to protocols that are compatible with this sequencing kit.
+    //
+    // Set to empty string to find protocols matching all kits.
+    string sequencing_kit = 2;
+
+    // Limit response to certain protocol types.
+    ExperimentType experiment_type = 3;
+}
+
+message FindProtocolsResponse {
+    message Protocol {
+        // An identifying string for protocol, of the form: LOCATION:relative/path/to/protocol
+        //
+        // The identifier uniquely identifies the protocol.
+        //
+        string identifier = 1;
+
+        // Whether the protocol requires a flow cell product code in order to start.
+        bool requires_flow_cell_product_code = 2;
+
+        // Whether the protocol requires a sequencing kit in order to start.
+        bool requires_sequencing_kit = 3;
+    }
+
+    // Protocols available for starting.
+    repeated Protocol protocols = 1;
 }
