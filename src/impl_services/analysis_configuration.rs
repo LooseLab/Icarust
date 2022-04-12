@@ -1,25 +1,23 @@
 //! Implmentation of the analysis configuration service
-//! 
+//!
 //! Implements the get read classifcation method
-//! 
-pub mod analysis {
-    tonic::include_proto!("minknow_api.analysis_configuration");
-}
-use analysis::analysis_configuration_service_server::AnalysisConfigurationService;
-use tonic::{Request, Response, Status};
-use std::collections::HashMap;
+//!
 
+use std::collections::HashMap;
+use tonic::{Request, Response, Status};
+
+use crate::services::minknow_api::analysis_configuration;
+use crate::services::minknow_api::analysis_configuration::analysis_configuration_service_server::AnalysisConfigurationService;
 #[derive(Debug)]
 pub struct Analysis();
-
 
 #[tonic::async_trait]
 impl AnalysisConfigurationService for Analysis {
     /// Get read classifications, as an int to string map.
-    async fn get_read_classifications (
+    async fn get_read_classifications(
         &self,
-        _request: Request<analysis::GetReadClassificationsRequest>
-    ) -> Result <Response<analysis::GetReadClassificationsResponse>, Status> {
+        _request: Request<analysis_configuration::GetReadClassificationsRequest>,
+    ) -> Result<Response<analysis_configuration::GetReadClassificationsResponse>, Status> {
         // Hard coded to minknows current values
         let class_map = HashMap::from([
             (83, "strand".to_string()),
@@ -34,13 +32,12 @@ impl AnalysisConfigurationService for Analysis {
             (80, "pore".to_string()),
             (85, "unavailable".to_string()),
             (84, "transition".to_string()),
-            (78, "unclassed".to_string())
+            (78, "unclassed".to_string()),
         ]);
         Ok(Response::new(
-            analysis::GetReadClassificationsResponse{
-                read_classifications: class_map
-            }
-            )
-        )
+            analysis_configuration::GetReadClassificationsResponse {
+                read_classifications: class_map,
+            },
+        ))
     }
 }
