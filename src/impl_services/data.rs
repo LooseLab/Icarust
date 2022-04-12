@@ -42,7 +42,7 @@ use env_logger::Env;
 const CHANNEL_SIZE: usize = 3000;
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
-const MEAN_READ_LEN: f64 = 20000.0 * 450.0;
+const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
 const STD_DEV: f64 = 3000.0;
 
 
