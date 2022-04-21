@@ -38,6 +38,55 @@ service DataService {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
 
+
+    // Get the data types of data items produced by this service.
+    //
+    // In order to allow clients to efficiently deal with large volumes of data in languages such as
+    // Python, this service can provide data as raw bytes. This call can be used to determine how to
+    // interpret those bytes. This can be used to construct an appropriate numpy dtype, for example.
+    rpc get_data_types (GetDataTypesRequest) returns (GetDataTypesResponse) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+}
+
+
+message GetDataTypesRequest {}
+
+message GetDataTypesResponse {
+    message DataType {
+        enum Type {
+            SIGNED_INTEGER = 0;
+            UNSIGNED_INTEGER = 1;
+            FLOATING_POINT = 2;
+        }
+
+        // The basic type of the data item.
+        Type type = 1;
+
+        // Whether the type is big-endian (high-byte first).
+        //
+        // For numeric data types, if this is not set, they are little-endian (low-byte first).
+        bool big_endian = 2;
+
+        // The size of the data type in bytes.
+        uint32 size = 3;
+    }
+
+    // The format of the uncalibrated (ADC) signal data returned by get_raw_signal_bytes().
+    //
+    // In the current release, this will describe 16-bit little-endian integers.
+    DataType uncalibrated_signal = 1;
+
+    // The format of the calibrated (picoamp) signal data returned by get_raw_signal_bytes().
+    //
+    // In the current release, this will describe 32-bit IEEE 754 floating point values.
+    DataType calibrated_signal = 2;
+
+    // The format of the bias voltage data returned by get_raw_signal_bytes().
+    //
+    // In the current release, this will describe 16-bit little-endian integers.
+    DataType bias_voltages = 3;
 }
 
 

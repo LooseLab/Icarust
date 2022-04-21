@@ -12,8 +12,9 @@
 //! 
 use crate::services::minknow_api::data::data_service_server::DataService;
 use crate::services::minknow_api::data::get_live_reads_request::action;
-use crate::services::minknow_api::data::{GetLiveReadsRequest, GetLiveReadsResponse, get_live_reads_request, get_live_reads_response};
+use crate::services::minknow_api::data::{GetLiveReadsRequest, GetLiveReadsResponse, get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse};
 use crate::services::minknow_api::data::get_live_reads_response::ReadData;
+use crate::services::minknow_api::data::get_data_types_response::{DataType, data_type};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -469,5 +470,28 @@ impl DataService for DataServiceServicer {
         println!("replying {:#?}", now2.elapsed().as_millis());
         Ok(Response::new(Box::pin(output)
             as Self::get_live_readsStream))
+    }
+
+    async fn get_data_types(
+        &self,
+        request: Request<GetDataTypesRequest>,
+    ) -> Result<Response<GetDataTypesResponse>, Status> {
+        Ok(Response::new(GetDataTypesResponse {
+            uncalibrated_signal: Some(DataType {
+                r#type: 2,
+                big_endian: false,
+                size: 4,
+            }),
+            calibrated_signal: Some(DataType {
+                r#type: 0,
+                big_endian: false,
+                size: 2,
+            }),
+            bias_voltages: Some(DataType {
+                r#type: 0,
+                big_endian: false,
+                size: 2,
+            }),
+        }))
     }
 }
