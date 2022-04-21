@@ -12,6 +12,7 @@
 
 use crate::services::minknow_api::acquisition::acquisition_service_server::AcquisitionService;
 use crate::services::minknow_api::acquisition::{AcquisitionRunInfo, WatchCurrentAcquisitionRunRequest, CurrentStatusRequest, CurrentStatusResponse, GetProgressRequest, GetProgressResponse};
+use crate::services::minknow_api::acquisition::get_progress_response::RawPerChannel;
 use tonic::{Request, Response, Status};
 use tokio_stream::wrappers::ReceiverStream;
 use tokio::sync::mpsc;
@@ -54,13 +55,26 @@ impl AcquisitionService for Acquisition {
         &self, 
         _request: Request<CurrentStatusRequest>
     ) -> Result <Response<CurrentStatusResponse>, Status> {
-        unimplemented!()
+        Ok(Response::new(
+            CurrentStatusResponse {
+                status: 3,
+            }
+        ))
     }
 
     async fn get_progress (
         &self, 
         _request: Request<GetProgressRequest>
     ) -> Result <Response<GetProgressResponse>, Status> {
-        unimplemented!()
+        Ok(Response::new(
+            GetProgressResponse {
+                raw_per_channel: Some(
+                    RawPerChannel {
+                        acquired: 100,
+                        processed: 900
+                    }
+                )
+            }
+        ))
     }
 }
