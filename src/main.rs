@@ -71,7 +71,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr_position = "127.0.0.1:10001".parse().unwrap();
 
     let manager_init = Manager {
-        positions: [FlowCellPosition {
+        positions: vec![FlowCellPosition {
             name: String::from("Bantersaurus"),
             state: 1,
             rpc_ports: Some(RpcPorts {

@@ -20,7 +20,7 @@ use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub struct Manager {
-    pub positions: [FlowCellPosition; 1],
+    pub positions: Vec<FlowCellPosition>,
 }
 
 #[tonic::async_trait]
