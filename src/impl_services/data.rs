@@ -98,6 +98,7 @@ struct ReadInfo {
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no 
 /// effect on the run itself, but could be implemented to do so in the future if required.
 fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup) -> usize {
+    info!("Received stream setup, setting up.");
     match setuppy {
         get_live_reads_request::Request::Setup(h) => {
             run_setup.first = h.first_channel;
@@ -118,6 +119,7 @@ fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup) -
 /// Returns the number of actions processed.
 fn take_actions(action_request: get_live_reads_request::Request, response_carrier: &Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>, channel_read_info: &mut Vec<ReadInfo>) -> usize{
     // check that we have an action type and not a setup, whihc should be impossible
+    info!("Processing non setup actions");
     let actions_processed = match action_request {
         get_live_reads_request::Request::Actions(actions) => {
             let mut add_response = response_carrier.lock().unwrap();
@@ -326,7 +328,7 @@ impl DataServiceServicer {
                 // We have like some actions to adress before we do anything, if this is
                 // fast enough we don't have to thread it
                 if !received.is_none(){
-                    println!("unblocking");
+                    debug!("Actions received");
                     let request_type = received.unwrap().request.unwrap();
                     let actions_processed = match request_type {
                         // set up request
@@ -370,9 +372,9 @@ impl DataServiceServicer {
                     }
                     // read_chunks_counts[(read_chunk.raw_data.len() / 4000)] += 1;
                 }
-                info!("Channels with reads {channels_with_reads}");
-                info!("Reads incremented {reads_incremented}");
-                info!("Reaads_newly generate {reads_generated}");
+                debug!("Channels with reads {channels_with_reads}");
+                debug!("Reads incremented {reads_incremented}");
+                debug!("Reaads_newly generate {reads_generated}");
                 // info!("Chunk ;engh distribution {:#?}", read_chunks_counts);
                 
                 let _end =  now.elapsed().as_millis() - start;
@@ -399,7 +401,7 @@ impl DataService for DataServiceServicer {
         _request:  Request<tonic::Streaming<GetLiveReadsRequest>>,
     ) -> Result<Response<Self::get_live_readsStream>, Status> {
         let now2 = Instant::now();
-        debug!("Received request");
+        info!("Received get_live_reads request");
         let mut rng = rand::thread_rng();
         let tx = self.tx.clone();
         let mut stream = _request.into_inner();
@@ -467,7 +469,7 @@ impl DataService for DataServiceServicer {
             }
         };
 
-        println!("replying {:#?}", now2.elapsed().as_millis());
+        debug!("replying {:#?}", now2.elapsed().as_millis());
         Ok(Response::new(Box::pin(output)
             as Self::get_live_readsStream))
     }
