@@ -78,6 +78,7 @@ pub struct DataServiceServicer{
     read_data: Arc<Mutex<Vec<ReadChunk>>>,
     tx:  SyncSender<GetLiveReadsRequest>,
     action_responses: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
+    setup: Arc<Mutex<bool>>,
     read_count: usize,
     processed_actions: usize,
 }
@@ -97,7 +98,7 @@ struct ReadInfo {
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no 
 /// effect on the run itself, but could be implemented to do so in the future if required.
-fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup) -> usize {
+fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup, is_setup: &Arc<Mutex<bool>>) -> usize {
     info!("Received stream setup, setting up.");
     match setuppy {
         get_live_reads_request::Request::Setup(h) => {
@@ -105,6 +106,7 @@ fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup) -
             run_setup.last = h.last_channel;
             run_setup.setup = true;
             run_setup.dtype = h.raw_data_type;
+            *is_setup.lock().unwrap() = true;
         },
         _ => {} // ignore everything else
     };
@@ -295,6 +297,8 @@ impl DataServiceServicer {
         let action_response_safe: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>> = Arc::new(Mutex::new(Vec::with_capacity(CHANNEL_SIZE)));
         let thread_safe_responses = Arc::clone(&action_response_safe);
         let thread_safe = Arc::clone(&safe);
+        let is_setup = Arc::new(Mutex::new(false));
+        let is_safe_setup = Arc::clone(&is_setup);
         let (tx, rx): (SyncSender<GetLiveReadsRequest>, Receiver<GetLiveReadsRequest>) = sync_channel(CHANNEL_SIZE);
         let env = Env::default()
         .filter_or("MY_LOG_LEVEL", "info")
@@ -332,7 +336,7 @@ impl DataServiceServicer {
                     let request_type = received.unwrap().request.unwrap();
                     let actions_processed = match request_type {
                         // set up request
-                        get_live_reads_request::Request::Setup(_) => setup(request_type, & mut run_setup),
+                        get_live_reads_request::Request::Setup(_) => setup(request_type, & mut run_setup, &is_setup),
                         // list of actions
                         get_live_reads_request::Request::Actions(_) => take_actions(request_type, &thread_safe_responses, &mut channel_read_info)
                     };
@@ -373,8 +377,8 @@ impl DataServiceServicer {
                     // read_chunks_counts[(read_chunk.raw_data.len() / 4000)] += 1;
                 }
                 debug!("Channels with reads {channels_with_reads}");
-                debug!("Reads incremented {reads_incremented}");
-                debug!("Reaads_newly generate {reads_generated}");
+                info!("Reads incremented {reads_incremented}");
+                info!("Reaads_newly generate {reads_generated}");
                 // info!("Chunk ;engh distribution {:#?}", read_chunks_counts);
                 
                 let _end =  now.elapsed().as_millis() - start;
@@ -387,6 +391,7 @@ impl DataServiceServicer {
             action_responses: action_response_safe,
             read_count: 0,
             processed_actions: 0,
+            setup: is_safe_setup
         }
     }
 }
@@ -447,29 +452,34 @@ impl DataService for DataServiceServicer {
             container.push(h)
         }
         debug!("made container {:#?}", now2.elapsed().as_millis());
+        let is_setup = self.setup.lock().unwrap().clone();
 
         let output = async_stream::try_stream! {
     
             while let Some(live_reads_request) = stream.next().await {
+                info!("{:#?}", live_reads_request);
                 let live_reads_request = live_reads_request?;
                 // send all the actions we wish to take and send them
                 tx.send(live_reads_request).unwrap();
             }
             let no_response: Vec<get_live_reads_response::ActionResponse> = vec![];
-            for channel in 0..size {
-                if channel != 0 {
-                    action_responses_to_return = no_response.clone();
+            if is_setup{
+                for channel_slice in 0..size {
+                    info!("channel slice number is {}", channel_slice);
+                    if channel != 0 {
+                        action_responses_to_return = no_response.clone();
+                    }
+                    yield GetLiveReadsResponse{
+                        samples_since_start: 0,
+                        seconds_since_start: 0.0,
+                        channels: container[channel_slice].clone(),
+                        action_responses: action_responses_to_return.clone()
+                    };
                 }
-                yield GetLiveReadsResponse{
-                    samples_since_start: 0,
-                    seconds_since_start: 0.0,
-                    channels: container[channel].clone(),
-                    action_responses: action_responses_to_return.clone()
-                };
             }
         };
 
-        debug!("replying {:#?}", now2.elapsed().as_millis());
+        info!("replying {:#?}", now2.elapsed().as_millis());
         Ok(Response::new(Box::pin(output)
             as Self::get_live_readsStream))
     }

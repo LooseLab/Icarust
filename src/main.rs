@@ -1,5 +1,6 @@
 #![deny(missing_docs)]
 #![deny(missing_doc_code_examples)]
+#![recursion_limit = "256"]
 //! # Icarust
 //!
 //! A binary for running a mock, read-fish compatible grpc server to test live unblocking read-until experiments.
