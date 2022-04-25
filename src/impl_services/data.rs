@@ -461,20 +461,20 @@ impl DataService for DataServiceServicer {
                 let live_reads_request = live_reads_request?;
                 // send all the actions we wish to take and send them
                 tx.send(live_reads_request).unwrap();
-            }
-            let no_response: Vec<get_live_reads_response::ActionResponse> = vec![];
-            if is_setup{
-                for channel_slice in 0..size {
-                    info!("channel slice number is {}", channel_slice);
-                    if channel != 0 {
-                        action_responses_to_return = no_response.clone();
+                let no_response: Vec<get_live_reads_response::ActionResponse> = vec![];
+                if is_setup{
+                    for channel_slice in 0..size {
+                        info!("channel slice number is {}", channel_slice);
+                        if channel != 0 {
+                            action_responses_to_return = no_response.clone();
+                        }
+                        yield GetLiveReadsResponse{
+                            samples_since_start: 0,
+                            seconds_since_start: 0.0,
+                            channels: container[channel_slice].clone(),
+                            action_responses: action_responses_to_return.clone()
+                        };
                     }
-                    yield GetLiveReadsResponse{
-                        samples_since_start: 0,
-                        seconds_since_start: 0.0,
-                        channels: container[channel_slice].clone(),
-                        action_responses: action_responses_to_return.clone()
-                    };
                 }
             }
         };
