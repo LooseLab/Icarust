@@ -51,7 +51,8 @@ const STD_DEV: f64 = 3000.0;
 struct ReadChunk {
     raw_data: Vec<u8>,
     read_id: String,
-    ignore_me_lol: bool
+    ignore_me_lol: bool,
+    read_number: u32,
 }
 
 #[derive(Debug)]
@@ -93,7 +94,8 @@ struct Weights {
 struct ReadInfo {
     read_id: String,
     read: Vec<u8>,
-    stop_receiving: bool
+    stop_receiving: bool,
+    read_number: u32
 }
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no 
@@ -150,7 +152,7 @@ fn take_actions(action_request: get_live_reads_request::Request, response_carrie
 /// Unblocks reads by clearing the channels (Represented by the index in a Vec) read vec.
 fn unblock_reads(_action: get_live_reads_request::UnblockAction, action_id: String, channel_number: u32, channel_read_info: &mut Vec<ReadInfo>) -> get_live_reads_response::ActionResponse {
     // need a way of picking out channel by channel number or read ID, lets go by channel number for now -> lame but might work
-    let value = channel_read_info.get_mut(channel_number as usize).unwrap();
+    let value = channel_read_info.get_mut(channel_number as usize).expect("Failed on channel {channel_number}");
     value.read.clear();
     get_live_reads_response::ActionResponse{
         action_id,
@@ -221,6 +223,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             raw_data: vec![],
             read_id: String::from(""),
             ignore_me_lol: false,
+            read_number: 0
         };
         num.push(empty_read_chunk);
         let read_info = ReadInfo{
@@ -228,6 +231,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             // potench use with capacity?
             read: vec![],
             stop_receiving: false,
+            read_number: 0
         };
         channel_read_info.push(read_info);
     }
@@ -239,12 +243,15 @@ fn generate_read(read_chunk: &mut ReadChunk, files: [&str; 2],
     value: &mut ReadInfo, dist: &WeightedIndex<usize>,
     views: &HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<u8>, Dim<[usize; 1]>>)>,
     normal:  Normal<f64>,
-    rng: &mut ThreadRng) {
+    rng: &mut ThreadRng,
+    read_number: &mut u32) {
     value.read.clear();
+    
     // ne read, so don't ignore it on the actual sgrpc side
     read_chunk.ignore_me_lol = false;
     // chance to acquire
     if rand::thread_rng().gen_bool(0.7){
+        value.read_number = *read_number;
         let file_choice = files[dist.sample(rng)];
         let file_info = &views[file_choice];
         // start point in file
@@ -255,6 +262,9 @@ fn generate_read(read_chunk: &mut ReadChunk, files: [&str; 2],
         // slice the view to get our full read
         value.read.append(&mut file_info.1.slice(s![start..end]).to_vec());
         value.read_id = Uuid::new_v4().to_string();
+    } else {
+        // we actually haven't started a read so we need to take the read numebr back down one, as the addition is fixed
+        *read_number -= 1
     }
         
 
@@ -313,6 +323,8 @@ impl DataServiceServicer {
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
             let mut total_actions_processed: usize = 0;
+            // read number for adding to unblock
+            let mut read_number: u32 = 0;
 
             let mut channel_read_info = setup_channel_vecs(channel_size, &thread_safe);
 
@@ -356,6 +368,7 @@ impl DataServiceServicer {
                     let read_chunk = num.get_mut(i).unwrap();
                     let value = channel_read_info.get_mut(i).unwrap();
                     if value.read.is_empty() {
+                        read_number += 1;
                         reads_generated += 1;
                         generate_read(
                             read_chunk,
@@ -364,7 +377,8 @@ impl DataServiceServicer {
                             &dist,
                             &views,
                             normal,
-                            &mut rng
+                            &mut rng,
+                            &mut read_number
                         )
                     } else {
                         reads_incremented += 1;
@@ -431,7 +445,7 @@ impl DataService for DataServiceServicer {
         let mut container = vec![];
         let size = channel_size as f64 / 24 as f64;
         let size = size.ceil() as usize;
-        let mut channel: u32 = 1;
+        let mut channel: u32 = 0;
         debug!("making container {:#?}", now2.elapsed().as_millis());
         // magic splitting into 24 reads using a drain like wow magic
         for _ in 0..(size){
