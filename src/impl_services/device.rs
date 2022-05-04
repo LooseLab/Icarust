@@ -11,6 +11,7 @@
 use crate::services::minknow_api::device;
 use crate::services::minknow_api::device::device_service_server::DeviceService;
 use crate::services::minknow_api::device::get_flow_cell_info_response::TemperatureOffsetNullable;
+use crate::services::setup_conf::get_channel_size;
 use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
@@ -47,7 +48,7 @@ impl DeviceService for Device {
     ) -> Result<Response<device::GetFlowCellInfoResponse>, Status> {
         Ok(Response::new(device::GetFlowCellInfoResponse {
             has_flow_cell: true,
-            channel_count: 512,
+            channel_count: get_channel_size() as u32,
             wells_per_channel: 4,
             flow_cell_id: "slow_poke".to_string(),
             asic_id_str: "help_me".to_string(),

@@ -15,6 +15,7 @@ use crate::services::minknow_api::data::get_live_reads_request::action;
 use crate::services::minknow_api::data::{GetLiveReadsRequest, GetLiveReadsResponse, get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse};
 use crate::services::minknow_api::data::get_live_reads_response::ReadData;
 use crate::services::minknow_api::data::get_data_types_response::{DataType, data_type};
+use crate::services::setup_conf::get_channel_size;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -40,7 +41,6 @@ use serde::Deserialize;
 use env_logger::Env;
 
 
-const CHANNEL_SIZE: usize = 3000;
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
 const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
@@ -292,14 +292,15 @@ impl DataServiceServicer {
         let json_file_path = Path::new("distributions.json");
         let files = ["NC_002516.2.squiggle.npy", "NC_003997.3.squiggle.npy"];
         let chunk_size = CHUNK_SIZE_1S as f64 * (BREAK_READS_MS as f64 / 1000.0);
+        let channel_size = get_channel_size();
         let chunk_size = chunk_size as usize;
-        let safe: Arc<Mutex<Vec<ReadChunk>>> = Arc::new(Mutex::new(Vec::with_capacity(CHANNEL_SIZE)));
-        let action_response_safe: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>> = Arc::new(Mutex::new(Vec::with_capacity(CHANNEL_SIZE)));
+        let safe: Arc<Mutex<Vec<ReadChunk>>> = Arc::new(Mutex::new(Vec::with_capacity(channel_size)));
+        let action_response_safe: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>> = Arc::new(Mutex::new(Vec::with_capacity(channel_size)));
         let thread_safe_responses = Arc::clone(&action_response_safe);
         let thread_safe = Arc::clone(&safe);
         let is_setup = Arc::new(Mutex::new(false));
         let is_safe_setup = Arc::clone(&is_setup);
-        let (tx, rx): (SyncSender<GetLiveReadsRequest>, Receiver<GetLiveReadsRequest>) = sync_channel(CHANNEL_SIZE);
+        let (tx, rx): (SyncSender<GetLiveReadsRequest>, Receiver<GetLiveReadsRequest>) = sync_channel(channel_size);
         let env = Env::default()
         .filter_or("MY_LOG_LEVEL", "info")
         .write_style_or("MY_LOG_STYLE", "always");
@@ -313,34 +314,35 @@ impl DataServiceServicer {
             let mut rng = rand::thread_rng();
             let mut total_actions_processed: usize = 0;
 
-            let mut channel_read_info = setup_channel_vecs(CHANNEL_SIZE, &thread_safe);
+            let mut channel_read_info = setup_channel_vecs(channel_size, &thread_safe);
 
             // normal distribution is great news for smooth read length graphs in minoTour
             let normal: Normal<f64> = Normal::new(MEAN_READ_LEN, STD_DEV).unwrap();
             let mut run_setup = RunSetup::new();
 
             loop {
+                info!("Sequencer mock loop start");
                 let start = now.elapsed().as_millis();
                 thread::sleep(Duration::from_millis(400));
 
                 let mut num = thread_safe.lock().unwrap();
-                let received = rx.try_recv();
-                let received = match received {
-                    Ok(received) => Some(received),
-                    Err(_e) => None
-                };
+                let received: Vec<GetLiveReadsRequest> = rx.try_iter().collect();
+
                 // We have like some actions to adress before we do anything, if this is
                 // fast enough we don't have to thread it
-                if !received.is_none(){
+                info!("Len received actions {}", received.len());
+                if !received.is_empty(){
                     debug!("Actions received");
-                    let request_type = received.unwrap().request.unwrap();
-                    let actions_processed = match request_type {
-                        // set up request
-                        get_live_reads_request::Request::Setup(_) => setup(request_type, & mut run_setup, &is_setup),
-                        // list of actions
-                        get_live_reads_request::Request::Actions(_) => take_actions(request_type, &thread_safe_responses, &mut channel_read_info)
-                    };
-                    total_actions_processed += actions_processed;
+                    for get_live_req in received {
+                        let request_type = get_live_req.request.unwrap();
+                        let actions_processed = match request_type {
+                            // set up request
+                            get_live_reads_request::Request::Setup(_) => setup(request_type, & mut run_setup, &is_setup),
+                            // list of actions
+                            get_live_reads_request::Request::Actions(_) => take_actions(request_type, &thread_safe_responses, &mut channel_read_info)
+                        };
+                        total_actions_processed += actions_processed;
+                    }
                 }
                 info!("Total actions processed: {}", total_actions_processed);
                 // get some basic stats about what is going on at each channel
@@ -348,7 +350,9 @@ impl DataServiceServicer {
                 // let read_chunks_counts = [0; 10];
                 let mut reads_incremented = 0;
                 let mut reads_generated = 0;
-                for i in 0..CHANNEL_SIZE {
+                let channel_size= get_channel_size();
+                for i in 0..channel_size
+                {
                     let read_chunk = num.get_mut(i).unwrap();
                     let value = channel_read_info.get_mut(i).unwrap();
                     if value.read.is_empty() {
@@ -377,8 +381,8 @@ impl DataServiceServicer {
                     // read_chunks_counts[(read_chunk.raw_data.len() / 4000)] += 1;
                 }
                 debug!("Channels with reads {channels_with_reads}");
-                info!("Reads incremented {reads_incremented}");
-                info!("Reaads_newly generate {reads_generated}");
+                debug!("Reads incremented {reads_incremented}");
+                debug!("Reaads_newly generate {reads_generated}");
                 // info!("Chunk ;engh distribution {:#?}", read_chunks_counts);
                 
                 let _end =  now.elapsed().as_millis() - start;
@@ -411,10 +415,10 @@ impl DataService for DataServiceServicer {
         let tx = self.tx.clone();
         let mut stream = _request.into_inner();
         let mut x = self.read_data.lock().unwrap();
-
+        let channel_size = get_channel_size();
         let mut y = x.clone();
         debug!("Acquired lock {:#?}", now2.elapsed().as_millis());
-        for i in 0..CHANNEL_SIZE{
+        for i in 0..channel_size{
             x[i].raw_data.clear();
         }
         mem::drop(x);
@@ -425,7 +429,7 @@ impl DataService for DataServiceServicer {
         mem::drop(action_responses);
 
         let mut container = vec![];
-        let size = CHANNEL_SIZE as f64 / 24 as f64;
+        let size = channel_size as f64 / 24 as f64;
         let size = size.ceil() as usize;
         let mut channel: u32 = 1;
         debug!("making container {:#?}", now2.elapsed().as_millis());
@@ -440,7 +444,7 @@ impl DataService for DataServiceServicer {
                         start_sample: 0,
                         chunk_start_sample: 0,
                         chunk_length: 0,
-                        chunk_classifications: vec![69],
+                        chunk_classifications: vec![83],
                         raw_data: read_chunk.raw_data,
                         median_before: rng.gen_range(200.0..250.0),
                         median: rng.gen_range(100.0..120.0),
@@ -451,20 +455,23 @@ impl DataService for DataServiceServicer {
             }
             container.push(h)
         }
+
         debug!("made container {:#?}", now2.elapsed().as_millis());
-        let is_setup = self.setup.lock().unwrap().clone();
+        debug!("Size is {}", size);
+        debug!("container len is {}", container.len());
+        // let is_setup = self.setup.lock().unwrap().clone();
+        let is_setup = true;
+
 
         let output = async_stream::try_stream! {
-    
             while let Some(live_reads_request) = stream.next().await {
-                info!("{:#?}", live_reads_request);
                 let live_reads_request = live_reads_request?;
                 // send all the actions we wish to take and send them
                 tx.send(live_reads_request).unwrap();
                 let no_response: Vec<get_live_reads_response::ActionResponse> = vec![];
                 if is_setup{
                     for channel_slice in 0..size {
-                        info!("channel slice number is {}", channel_slice);
+                        debug!("channel slice number is {}", channel_slice);
                         if channel != 0 {
                             action_responses_to_return = no_response.clone();
                         }
