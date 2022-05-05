@@ -40,13 +40,10 @@ use ndarray_npy::ViewNpyExt;
 use serde::Deserialize;
 use env_logger::Env;
 
-
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
 const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
 const STD_DEV: f64 = 3000.0;
-
-
 #[derive(Debug, Deserialize, Clone)]
 struct ReadChunk {
     raw_data: Vec<u8>,
@@ -325,7 +322,6 @@ impl DataServiceServicer {
             let mut total_actions_processed: usize = 0;
             // read number for adding to unblock
             let mut read_number: u32 = 0;
-
             let mut channel_read_info = setup_channel_vecs(channel_size, &thread_safe);
 
             // normal distribution is great news for smooth read length graphs in minoTour
@@ -333,7 +329,8 @@ impl DataServiceServicer {
             let mut run_setup = RunSetup::new();
 
             loop {
-                info!("Sequencer mock loop start");
+                debug!("Sequencer mock loop start");
+
                 let start = now.elapsed().as_millis();
                 thread::sleep(Duration::from_millis(400));
 
@@ -342,7 +339,6 @@ impl DataServiceServicer {
 
                 // We have like some actions to adress before we do anything, if this is
                 // fast enough we don't have to thread it
-                info!("Len received actions {}", received.len());
                 if !received.is_empty(){
                     debug!("Actions received");
                     for get_live_req in received {
@@ -425,77 +421,73 @@ impl DataService for DataServiceServicer {
     ) -> Result<Response<Self::get_live_readsStream>, Status> {
         let now2 = Instant::now();
         info!("Received get_live_reads request");
-        let mut rng = rand::thread_rng();
         let tx = self.tx.clone();
         let mut stream = _request.into_inner();
-        let mut x = self.read_data.lock().unwrap();
+        let data_lock = Arc::clone(&self.read_data);
         let channel_size = get_channel_size();
-        let mut y = x.clone();
-        debug!("Acquired lock {:#?}", now2.elapsed().as_millis());
-        for i in 0..channel_size{
-            x[i].raw_data.clear();
-        }
-        mem::drop(x);
+
         debug!("Dropped lock {:#?}", now2.elapsed().as_millis());
-        let mut action_responses = self.action_responses.lock().unwrap();
-        let mut action_responses_to_return = action_responses.clone();
-        action_responses.clear();
-        mem::drop(action_responses);
 
-        let mut container = vec![];
-        let size = channel_size as f64 / 24 as f64;
-        let size = size.ceil() as usize;
-        let mut channel: u32 = 0;
-        debug!("making container {:#?}", now2.elapsed().as_millis());
-        // magic splitting into 24 reads using a drain like wow magic
-        for _ in 0..(size){
-            let mut h = HashMap::with_capacity(24);
-            for read_chunk in y.drain(..min(24, y.len())){
-                if !read_chunk.ignore_me_lol && read_chunk.raw_data.len() > 0{
-                    h.insert(channel, ReadData{
-                        id: read_chunk.read_id,
-                        number: 0,
-                        start_sample: 0,
-                        chunk_start_sample: 0,
-                        chunk_length: 0,
-                        chunk_classifications: vec![83],
-                        raw_data: read_chunk.raw_data,
-                        median_before: rng.gen_range(200.0..250.0),
-                        median: rng.gen_range(100.0..120.0),
-            
-                    });
-                }
-                channel += 1;
-            }
-            container.push(h)
-        }
 
-        debug!("made container {:#?}", now2.elapsed().as_millis());
-        debug!("Size is {}", size);
-        debug!("container len is {}", container.len());
         // let is_setup = self.setup.lock().unwrap().clone();
-        let is_setup = true;
 
 
         let output = async_stream::try_stream! {
             while let Some(live_reads_request) = stream.next().await {
+                let now2 = Instant::now();
                 let live_reads_request = live_reads_request?;
-                // send all the actions we wish to take and send them
                 tx.send(live_reads_request).unwrap();
-                let no_response: Vec<get_live_reads_response::ActionResponse> = vec![];
-                if is_setup{
-                    for channel_slice in 0..size {
-                        debug!("channel slice number is {}", channel_slice);
-                        if channel != 0 {
-                            action_responses_to_return = no_response.clone();
-                        }
-                        yield GetLiveReadsResponse{
-                            samples_since_start: 0,
-                            seconds_since_start: 0.0,
-                            channels: container[channel_slice].clone(),
-                            action_responses: action_responses_to_return.clone()
-                        };
+                let mut z2 = {
+                    info!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
+                    // send all the actions we wish to take and send them
+                    let mut z1 = data_lock.lock().unwrap();
+                    info!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
+
+                    let mut z2 = z1.clone();
+
+                    for i in 0..channel_size {
+                        z1[i].raw_data.clear();
                     }
+                    mem::drop(z1);
+                    info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
+
+                    z2
+                };
+                let mut container = vec![];
+                let size = channel_size as f64 / 24 as f64;
+                let size = size.ceil() as usize;
+                let mut channel: u32 = 0;
+                // magic splitting into 24 reads using a drain like wow magic
+                for _ in 0..(size){
+                    let mut h = HashMap::with_capacity(24);
+                    for read_chunk in z2.drain(..min(24, z2.len())){
+                        if !read_chunk.ignore_me_lol && read_chunk.raw_data.len() > 0{
+                            h.insert(channel, ReadData{
+                                id: read_chunk.read_id,
+                                number: 0,
+                                start_sample: 0,
+                                chunk_start_sample: 0,
+                                chunk_length: 0,
+                                chunk_classifications: vec![83],
+                                raw_data: read_chunk.raw_data,
+                                median_before: 225.0,
+                                median: 110.0,
+                    
+                            });
+                        }
+                        channel += 1;
+                    }
+                    container.push(h)
+                }
+                
+                for channel_slice in 0..size {
+                    debug!("channel slice number is {}", channel_slice);
+                    yield GetLiveReadsResponse{
+                        samples_since_start: 0,
+                        seconds_since_start: 0.0,
+                        channels: container[channel_slice].clone(),
+                        action_responses: vec![]
+                    };
                 }
             }
         };
