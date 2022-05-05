@@ -132,7 +132,7 @@ fn take_actions(action_request: get_live_reads_request::Request, response_carrie
                 let action_type = action.action.unwrap();
                 let (action_response, unblock_count, stopped_count) = match action_type {
                     action::Action::Unblock(unblock) => {
-                        unblock_reads(unblock, action.action_id, action.channel, channel_read_info)
+                        unblock_reads(unblock, action.action_id, action.channel - 1, channel_read_info)
                     },
                     action::Action::StopFurtherData(stop) => {
                         stop_sending_read(stop, action.action_id, action.channel, channel_read_info)
@@ -154,6 +154,7 @@ fn unblock_reads(_action: get_live_reads_request::UnblockAction, action_id: Stri
     // need a way of picking out channel by channel number or read ID, lets go by channel number for now -> lame but might work
     let value = channel_read_info.get_mut(channel_number as usize).expect("Failed on channel {channel_number}");
     value.read.clear();
+    info!("UNblcoked read!!! {:#?}", value.read);
     (get_live_reads_response::ActionResponse{
         action_id,
         response: 0
