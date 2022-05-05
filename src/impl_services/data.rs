@@ -120,7 +120,7 @@ fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup, i
 /// Returns the number of actions processed.
 fn take_actions(action_request: get_live_reads_request::Request, response_carrier: &Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>, channel_read_info: &mut Vec<ReadInfo>) -> (usize, usize, usize){
     // check that we have an action type and not a setup, whihc should be impossible
-    info!("Processing non setup actions");
+    debug!("Processing non setup actions");
     let (unblocks_processed, stop_rec_processed) = match action_request {
         get_live_reads_request::Request::Actions(actions) => {
             let mut add_response = response_carrier.lock().unwrap();
@@ -273,17 +273,12 @@ fn increment_shared_read(value: &mut ReadInfo,
                 ) {
     let ran = min(value.read.len(), *chunk_size);
     let mut a: Vec<u8> = value.read.drain(..ran).collect();
-    // a bit approximate but if we have finished the read, we can clear the shared cache
-    if value.read.len() == 0{
-        read_chunk.raw_data.clear();
-    }
+
     // issued a stop receiving so no more data sent please
     if value.stop_receiving{
         read_chunk.ignore_me_lol = true
     } else {
-        if value.read.len() != 0 {
-            read_chunk.raw_data.append(&mut a);
-        }
+        read_chunk.raw_data.append(&mut a);
         read_chunk.read_id = value.read_id.clone();
     }
 }
@@ -395,7 +390,7 @@ impl DataServiceServicer {
                     }
                     // read_chunks_counts[(read_chunk.raw_data.len() / 4000)] += 1;
                 }
-                info!("Channels with reads {channels_with_reads}, Reaads_newly created {reads_generated}, Reads incremented {reads_incremented} ");
+                info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
                 // debug!("Reads incremented {reads_incremented}");
                 // debug!("Reaads_newly generate {reads_generated}");
                 // info!("Chunk ;engh distribution {:#?}", read_chunks_counts);
@@ -468,11 +463,11 @@ impl DataService for DataServiceServicer {
                 for _ in 0..(size){
                     let mut h = HashMap::with_capacity(24);
                     for read_chunk in z2.drain(..min(24, z2.len())){
+                        if read_chunk.raw_data.len() == 0 {
+                            num_channels_empty += 1;
+                        }
                         if read_chunk.ignore_me_lol {
                             num_reads_stop_receiving += 1;
-                        }
-                        if read_chunk.raw_data.len() == 0 {
-                            num_channels_empty = 0;
                         }
                         if !read_chunk.ignore_me_lol && read_chunk.raw_data.len() > 0{
                             h.insert(channel, ReadData{
@@ -495,12 +490,15 @@ impl DataService for DataServiceServicer {
                 info!("Reads in this batch ignored {}, Reads empty in this batch {}", num_reads_stop_receiving, num_channels_empty);
                 for channel_slice in 0..size {
                     debug!("channel slice number is {}", channel_slice);
-                    yield GetLiveReadsResponse{
-                        samples_since_start: 0,
-                        seconds_since_start: 0.0,
-                        channels: container[channel_slice].clone(),
-                        action_responses: vec![]
-                    };
+                    if container[channel_slice].len() > 0 {
+                        yield GetLiveReadsResponse{
+                            samples_since_start: 0,
+                            seconds_since_start: 0.0,
+                            channels: container[channel_slice].clone(),
+                            action_responses: vec![]
+                        };
+                    }
+                    
                 }
             }
         };
