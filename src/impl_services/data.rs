@@ -97,7 +97,7 @@ struct ReadInfo {
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no 
 /// effect on the run itself, but could be implemented to do so in the future if required.
-fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup, is_setup: &Arc<Mutex<bool>>) -> usize {
+fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup, is_setup: &Arc<Mutex<bool>>) -> (usize, usize, usize) {
     info!("Received stream setup, setting up.");
     match setuppy {
         get_live_reads_request::Request::Setup(h) => {
@@ -110,7 +110,7 @@ fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup, i
         _ => {} // ignore everything else
     };
     // return we have prcessed 1 action
-    1
+    (1, 0, 0)
 }
 
 /// Iterate through a given set of received actions and match the type of action to take
@@ -118,17 +118,19 @@ fn setup (setuppy: get_live_reads_request::Request, run_setup: & mut RunSetup, i
 /// Stop receving a read sets the stop_receiving field on a ReadInfo struct to True, so we don't send it back.
 /// Action Responses are appendable to a Vec which can be shared between threads, so can be accessed by the GRPC, which drains the Vec and sends back all responses.
 /// Returns the number of actions processed.
-fn take_actions(action_request: get_live_reads_request::Request, response_carrier: &Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>, channel_read_info: &mut Vec<ReadInfo>) -> usize{
+fn take_actions(action_request: get_live_reads_request::Request, response_carrier: &Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>, channel_read_info: &mut Vec<ReadInfo>) -> (usize, usize, usize){
     // check that we have an action type and not a setup, whihc should be impossible
     info!("Processing non setup actions");
-    let actions_processed = match action_request {
+    let (unblocks_processed, stop_rec_processed) = match action_request {
         get_live_reads_request::Request::Actions(actions) => {
             let mut add_response = response_carrier.lock().unwrap();
-            let mut actions_processed: usize = 0;
+            let mut unblocks_processed: usize = 0;
+            let mut stop_rec_processed: usize = 0;
+
             // iterate a vec of Action
             for action in actions.actions{
                 let action_type = action.action.unwrap();
-                let action_response = match action_type {
+                let (action_response, unblock_count, stopped_count) = match action_type {
                     action::Action::Unblock(unblock) => {
                         unblock_reads(unblock, action.action_id, action.channel, channel_read_info)
                     },
@@ -137,35 +139,36 @@ fn take_actions(action_request: get_live_reads_request::Request, response_carrie
                     }
                 };
                 add_response.push(action_response);
-                actions_processed += 1;
+                unblocks_processed += unblock_count;
+                stop_rec_processed += stopped_count;
             }
-            actions_processed
+            (unblocks_processed, stop_rec_processed)
         },
-        _ => {0}
+        _ => {(0,0)}
     };
-    actions_processed
+    (0, unblocks_processed, stop_rec_processed)
 }
 
 /// Unblocks reads by clearing the channels (Represented by the index in a Vec) read vec.
-fn unblock_reads(_action: get_live_reads_request::UnblockAction, action_id: String, channel_number: u32, channel_read_info: &mut Vec<ReadInfo>) -> get_live_reads_response::ActionResponse {
+fn unblock_reads(_action: get_live_reads_request::UnblockAction, action_id: String, channel_number: u32, channel_read_info: &mut Vec<ReadInfo>) -> (get_live_reads_response::ActionResponse, usize, usize) {
     // need a way of picking out channel by channel number or read ID, lets go by channel number for now -> lame but might work
     let value = channel_read_info.get_mut(channel_number as usize).expect("Failed on channel {channel_number}");
     value.read.clear();
-    get_live_reads_response::ActionResponse{
+    (get_live_reads_response::ActionResponse{
         action_id,
         response: 0
-    }
+    }, 1, 0)
 }
 
 /// Stop sending read data, sets Stop receiving to True.
-fn stop_sending_read(_action: get_live_reads_request::StopFurtherData, action_id: String, channel_number: u32, channel_read_info: &mut Vec<ReadInfo>)  -> get_live_reads_response::ActionResponse {
+fn stop_sending_read(_action: get_live_reads_request::StopFurtherData, action_id: String, channel_number: u32, channel_read_info: &mut Vec<ReadInfo>)  -> (get_live_reads_response::ActionResponse, usize, usize) {
     // need a way of picking out channel by channel number or read ID
     let value = channel_read_info.get_mut(channel_number as usize).unwrap();
     value.stop_receiving = true;
-    get_live_reads_response::ActionResponse{
+    (get_live_reads_response::ActionResponse{
         action_id,
         response: 0
-    }
+    }, 0, 1)
 }
 
 /// Read in the species distribution JSON, which gives us the odds of a species genome being chosen in a multi species sample.
@@ -242,29 +245,23 @@ fn generate_read(read_chunk: &mut ReadChunk, files: [&str; 2],
     normal:  Normal<f64>,
     rng: &mut ThreadRng,
     read_number: &mut u32) {
+    // make sure the read data is clear and set stop receieivng to false so we don't accidentally keep the read
     value.read.clear();
-    
+    value.stop_receiving = false;
     // ne read, so don't ignore it on the actual sgrpc side
     read_chunk.ignore_me_lol = false;
     // chance to acquire
-    if rand::thread_rng().gen_bool(0.7){
-        value.read_number = *read_number;
-        let file_choice = files[dist.sample(rng)];
-        let file_info = &views[file_choice];
-        // start point in file
-        let start: usize = rng.gen_range(0..file_info.0-1000) as usize;
-        let read_length: usize = normal.sample(&mut rand::thread_rng()) as usize;
-        // don;t over slice our read
-        let end: usize = cmp::min(start+ read_length, file_info.0 -1);
-        // slice the view to get our full read
-        value.read.append(&mut file_info.1.slice(s![start..end]).to_vec());
-        value.read_id = Uuid::new_v4().to_string();
-    } else {
-        // we actually haven't started a read so we need to take the read numebr back down one, as the addition is fixed
-        *read_number -= 1
-    }
-        
-
+    value.read_number = *read_number;
+    let file_choice = files[dist.sample(rng)];
+    let file_info = &views[file_choice];
+    // start point in file
+    let start: usize = rng.gen_range(0..file_info.0-1000) as usize;
+    let read_length: usize = normal.sample(&mut rand::thread_rng()) as usize;
+    // don;t over slice our read
+    let end: usize = cmp::min(start+ read_length, file_info.0 -1);
+    // slice the view to get our full read
+    value.read.append(&mut file_info.1.slice(s![start..end]).to_vec());
+    value.read_id = Uuid::new_v4().to_string();
 }
 
 /// Increment the length of the read raw data available to be served over the GRPC by draining it from the vec that the 
@@ -319,7 +316,10 @@ impl DataServiceServicer {
         // start the thread to generate data
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
-            let mut total_actions_processed: usize = 0;
+            let mut total_unblocks_processed: usize = 0;
+            let mut total_stop_rec_processed: usize = 0;
+            let mut total_setup_processed: usize = 0;
+
             // read number for adding to unblock
             let mut read_number: u32 = 0;
             let mut channel_read_info = setup_channel_vecs(channel_size, &thread_safe);
@@ -343,16 +343,18 @@ impl DataServiceServicer {
                     debug!("Actions received");
                     for get_live_req in received {
                         let request_type = get_live_req.request.unwrap();
-                        let actions_processed = match request_type {
+                        let (setup_proc, unblock_proc, stop_rec_proc) = match request_type {
                             // set up request
                             get_live_reads_request::Request::Setup(_) => setup(request_type, & mut run_setup, &is_setup),
                             // list of actions
                             get_live_reads_request::Request::Actions(_) => take_actions(request_type, &thread_safe_responses, &mut channel_read_info)
                         };
-                        total_actions_processed += actions_processed;
+                        total_unblocks_processed += unblock_proc;
+                        total_setup_processed += setup_proc;
+                        total_stop_rec_processed += stop_rec_proc
                     }
                 }
-                info!("Total actions processed: {}", total_actions_processed);
+                info!("Total unblocks processed {}, Total stop rec processed {}", total_unblocks_processed, total_stop_rec_processed);
                 // get some basic stats about what is going on at each channel
                 let mut channels_with_reads = 0;
                 // let read_chunks_counts = [0; 10];
@@ -364,18 +366,21 @@ impl DataServiceServicer {
                     let read_chunk = num.get_mut(i).unwrap();
                     let value = channel_read_info.get_mut(i).unwrap();
                     if value.read.is_empty() {
-                        read_number += 1;
-                        reads_generated += 1;
-                        generate_read(
-                            read_chunk,
-                            files,
-                            value,
-                            &dist,
-                            &views,
-                            normal,
-                            &mut rng,
-                            &mut read_number
-                        )
+                        // chance to aquire a read
+                        if rand::thread_rng().gen_bool(0.07){
+                            read_number += 1;
+                            reads_generated += 1;
+                            generate_read(
+                                read_chunk,
+                                files,
+                                value,
+                                &dist,
+                                &views,
+                                normal,
+                                &mut rng,
+                                &mut read_number
+                            )
+                        }
                     } else {
                         reads_incremented += 1;
                         // read increment_shared_read doc to understand what is going on here.
@@ -390,9 +395,9 @@ impl DataServiceServicer {
                     }
                     // read_chunks_counts[(read_chunk.raw_data.len() / 4000)] += 1;
                 }
-                debug!("Channels with reads {channels_with_reads}");
-                debug!("Reads incremented {reads_incremented}");
-                debug!("Reaads_newly generate {reads_generated}");
+                info!("Channels with reads {channels_with_reads}, Reaads_newly created {reads_generated}, Reads incremented {reads_incremented} ");
+                // debug!("Reads incremented {reads_incremented}");
+                // debug!("Reaads_newly generate {reads_generated}");
                 // info!("Chunk ;engh distribution {:#?}", read_chunks_counts);
                 
                 let _end =  now.elapsed().as_millis() - start;
@@ -438,10 +443,10 @@ impl DataService for DataServiceServicer {
                 let live_reads_request = live_reads_request?;
                 tx.send(live_reads_request).unwrap();
                 let mut z2 = {
-                    info!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
+                    debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
                     // send all the actions we wish to take and send them
                     let mut z1 = data_lock.lock().unwrap();
-                    info!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
+                    debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
 
                     let mut z2 = z1.clone();
 
@@ -449,7 +454,7 @@ impl DataService for DataServiceServicer {
                         z1[i].raw_data.clear();
                     }
                     mem::drop(z1);
-                    info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
+                    debug!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
 
                     z2
                 };
@@ -457,10 +462,18 @@ impl DataService for DataServiceServicer {
                 let size = channel_size as f64 / 24 as f64;
                 let size = size.ceil() as usize;
                 let mut channel: u32 = 0;
+                let mut num_reads_stop_receiving = 0;
+                let mut num_channels_empty = 0;
                 // magic splitting into 24 reads using a drain like wow magic
                 for _ in 0..(size){
                     let mut h = HashMap::with_capacity(24);
                     for read_chunk in z2.drain(..min(24, z2.len())){
+                        if read_chunk.ignore_me_lol {
+                            num_reads_stop_receiving += 1;
+                        }
+                        if read_chunk.raw_data.len() == 0 {
+                            num_channels_empty = 0;
+                        }
                         if !read_chunk.ignore_me_lol && read_chunk.raw_data.len() > 0{
                             h.insert(channel, ReadData{
                                 id: read_chunk.read_id,
@@ -479,7 +492,7 @@ impl DataService for DataServiceServicer {
                     }
                     container.push(h)
                 }
-                
+                info!("Reads in this batch ignored {}, Reads empty in this batch {}", num_reads_stop_receiving, num_channels_empty);
                 for channel_slice in 0..size {
                     debug!("channel slice number is {}", channel_slice);
                     yield GetLiveReadsResponse{
