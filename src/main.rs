@@ -4,9 +4,9 @@
 //! # Icarust
 //!
 //! A binary for running a mock, read-fish compatible grpc server to test live unblocking read-until experiments.
-//! 
+//!
 //! Simply `cargo run` in the directory to start the server, which hosts the Manager Server on 127.0.0.1:10000
-//! 
+//!
 //! Has one position, which is hosted on 127.0.0.1:10001
 //!  
 mod impl_services;
@@ -15,22 +15,24 @@ extern crate log;
 
 /// Import all our definied services
 mod services;
-use std::fs;
-use tonic::transport::Server;
-use toml;
 use serde::Deserialize;
+use std::fs;
+use toml;
+use tonic::transport::Server;
 
-use crate::impl_services::device::Device;
+use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::analysis_configuration::Analysis;
+use crate::impl_services::data::DataServiceServicer;
+use crate::impl_services::device::Device;
 use crate::impl_services::instance::Instance;
 use crate::impl_services::log::Log;
 use crate::impl_services::manager::Manager;
-use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::protocol::Protocol;
-use crate::impl_services::data::DataServiceServicer;
 
-use crate::services::minknow_api::device::device_service_server::DeviceServiceServer;
+use crate::services::minknow_api::acquisition::acquisition_service_server::AcquisitionServiceServer;
 use crate::services::minknow_api::analysis_configuration::analysis_configuration_service_server::AnalysisConfigurationServiceServer;
+use crate::services::minknow_api::data::data_service_server::DataServiceServer;
+use crate::services::minknow_api::device::device_service_server::DeviceServiceServer;
 use crate::services::minknow_api::instance::instance_service_server::InstanceServiceServer;
 use crate::services::minknow_api::log::log_service_server::LogServiceServer;
 use crate::services::minknow_api::manager::flow_cell_position::{
@@ -38,10 +40,7 @@ use crate::services::minknow_api::manager::flow_cell_position::{
 };
 use crate::services::minknow_api::manager::manager_service_server::ManagerServiceServer;
 use crate::services::minknow_api::manager::FlowCellPosition;
-use crate::services::minknow_api::acquisition::acquisition_service_server::AcquisitionServiceServer;
 use crate::services::minknow_api::protocol::protocol_service_server::ProtocolServiceServer;
-use crate::services::minknow_api::data::data_service_server::DataServiceServer;
-
 
 #[derive(Deserialize, Debug)]
 struct Config {
@@ -50,13 +49,12 @@ struct Config {
     flowcell_name: String,
 }
 
-
 /// Loads our config TOML to get the sample name, experiment name and flowcell name, which is returned as a Config struct.
 fn _load_toml(file_path: &str) -> Config {
-    let contents = fs::read_to_string(file_path)
-        .expect("Something went wrong with reading the file.");
+    let contents =
+        fs::read_to_string(file_path).expect("Something went wrong with reading the file.");
     let config: Config = toml::from_str(&contents).unwrap();
-    return config
+    return config;
 }
 
 /// Main function - Runs two asynchronous GRPC servers
@@ -104,9 +102,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let anal_svc = AnalysisConfigurationServiceServer::new(Analysis {});
     let devi_svc = DeviceServiceServer::new(Device {});
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {});
-    let protocol_svc = ProtocolServiceServer::new(Protocol{});
+    let protocol_svc = ProtocolServiceServer::new(Protocol {});
     let data_svc = DataServiceServer::new(DataServiceServicer::new(3000));
-
 
     Server::builder()
         .add_service(log_svc)
