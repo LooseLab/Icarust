@@ -10,15 +10,7 @@
 //! - Potentially can get out of sync between Actions and Reads
 //!
 //!
-use crate::services::minknow_api::data::data_service_server::DataService;
-use crate::services::minknow_api::data::get_data_types_response::{data_type, DataType};
-use crate::services::minknow_api::data::get_live_reads_request::action;
-use crate::services::minknow_api::data::get_live_reads_response::ReadData;
-use crate::services::minknow_api::data::{
-    get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
-    GetLiveReadsRequest, GetLiveReadsResponse,
-};
-use crate::services::setup_conf::get_channel_size;
+
 use futures::{Stream, StreamExt};
 use std::cmp::{self, min};
 use std::collections::HashMap;
@@ -31,7 +23,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 use std::{thread, u8};
-use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use env_logger::Env;
@@ -42,6 +33,22 @@ use rand::distributions::WeightedIndex;
 use rand::prelude::*;
 use rand_distr::{Distribution, Normal};
 use serde::Deserialize;
+use tonic::{Request, Response, Status};
+use chrono::prelude::*;
+use frust5_api::*;
+use fnv::FnvHashSet;
+
+
+use crate::_load_toml;
+use crate::services::minknow_api::data::data_service_server::DataService;
+use crate::services::minknow_api::data::get_data_types_response::DataType;
+use crate::services::minknow_api::data::get_live_reads_request::action;
+use crate::services::minknow_api::data::get_live_reads_response::ReadData;
+use crate::services::minknow_api::data::{
+    get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
+    GetLiveReadsRequest, GetLiveReadsResponse,
+};
+use crate::services::setup_conf::get_channel_size;
 
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
@@ -78,7 +85,9 @@ impl RunSetup {
 pub struct DataServiceServicer {
     read_data: Arc<Mutex<Vec<ReadChunk>>>,
     tx: SyncSender<GetLiveReadsRequest>,
+    // to be implemented
     action_responses: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
+    // also can now be implemented
     setup: Arc<Mutex<bool>>,
     read_count: usize,
     processed_actions: usize,
@@ -90,13 +99,147 @@ struct Weights {
     names: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// #Internal to the data generation thread
+#[derive(Debug, Deserialize, Clone)]
 struct ReadInfo {
     read_id: String,
     read: Vec<u8>,
     stop_receiving: bool,
     read_number: u32,
+    start_coord: usize,
+    stop_coord: usize,
+    was_unblocked: bool,
+    file_name: String,
+    write_out: bool,
+    start_time: u64,
+    start_mux: u8,
+    end_reason: u8,
+    channel_number: String
 }
+
+/// Add on between 0.7 and 1.5 of a chunk onto unblocked reads
+fn extend_unblocked_reads(normal: Normal<f64>, end: usize) -> usize {
+    let addition = normal.sample(&mut rand::thread_rng()) * 4000_f64;
+    let addition = addition.floor() as usize;
+    end + addition
+}
+
+fn convert(b: Vec<u8>) -> Vec<i16> {
+    b.into_iter().map(|f| f as i16).collect()
+}
+
+/// Start the thread that will ahndle writing out the FAST5 file,
+fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
+    let (complete_read_tx, complete_read_rx) = sync_channel(4000);
+    thread::spawn(move || {
+        let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(6000);
+        let exp_start_time = Utc::now();
+        let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
+        let config = _load_toml("config.toml");
+        let context_tags = HashMap::from([
+            ("barcoding_enabled", "0"),
+            ("experiment_duration_set", config.experiment_duration_set.as_str()),
+            ("experiment_type", "genomic_dna"),
+            ("local_basecalling", "0"),
+            ("package", "bream4"),
+            ("package_version", "6.3.5"),
+            ("sample_frequency", "4000"),
+            ("sequencing_kit", "sqk-lsk109"),
+        ]);
+        let tracking_id = HashMap::from([
+            ("asic_id", "817405089"),
+            ("asic_id_eeprom", "5661715"),
+            ("asic_temp", "29.357218"),
+            ("asic_version", "IA02D"),
+            ("auto_update", "0"),
+            (
+                "auto_update_source",
+                "https,//mirror.oxfordnanoportal.com/software/MinKNOW/",
+            ),
+            ("bream_is_standard", "0"),
+            ("configuration_version", "4.4.13"),
+            ("device_id", "Bantersaurus"),
+            ("device_type", config.position.as_str()),
+            ("distribution_status", "stable"),
+            ("distribution_version", "21.10.8"),
+            (
+                "exp_script_name",
+                "sequencing/sequencing_MIN106_DNA,FLO-MIN106,SQK-LSK109",
+            ),
+            ("exp_script_purpose", "sequencing_run"),
+            ("exp_start_time", ""),
+            ("flow_cell_id", config.flowcell_name.as_str()),
+            ("flow_cell_product_code", "FLO-MIN106"),
+            ("guppy_version", "5.0.17+99baa5b"),
+            ("heatsink_temp", "34.066406"),
+            ("host_product_code", "GRD-X5B003"),
+            ("host_product_serial_number", "NOTFOUND"),
+            ("hostname", "master"),
+            ("installation_type", "nc"),
+            ("local_firmware_file", "1"),
+            ("operating_system", "ubuntu 16.04"),
+            ("protocol_group_id", config.experiment_name.as_str()),
+            ("protocol_run_id", "SYNTHETIC_RUN"),
+            ("protocol_start_time", iso_time.as_str()),
+            ("protocols_version", "6.3.5"),
+            ("run_id", run_id.as_str()),
+            ("sample_id", config.sample_name.as_str()),
+            ("usb_config", "fx3_1.2.4#fpga_1.2.1#bulk#USB300"),
+            ("version", "4.4.3"),
+        ]);
+        let mut read_numbers_seen: FnvHashSet<u32> = FnvHashSet::with_capacity_and_hasher(4000, Default::default());
+        let files = ["NC_002516.2.squiggle.npy", "NC_003997.3.squiggle.npy"];
+        let views = read_views_of_data(files);
+        let normal: Normal<f64> = Normal::new(1.1, 0.1).unwrap();
+        let mut file_counter = 0;
+        // loop to collect reads and write out files
+        loop {
+
+            for finished_read_info in complete_read_rx.try_iter(){
+                read_infos.push(finished_read_info);
+                if read_infos.len() >= 4000{
+                    let fast5_file_name = format!("{}_pass_{}_{}.fast5", config.flowcell_name, &run_id[0..6], file_counter);
+                    // drain 4000 reads and write them into a FAST5 file
+                    let mut multi =
+                    MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
+                    for to_write_info in read_infos.drain(..4000) {
+                        if !read_numbers_seen.insert(to_write_info.read_number){
+                            continue
+                        }
+                        let new_end = extend_unblocked_reads(normal, to_write_info.stop_coord);
+                        let file_info = &views[to_write_info.file_name.as_str()];
+                        let new_end: usize = cmp::min(new_end, file_info.0 - 1);
+                        let signal = file_info.1.slice(s![to_write_info.start_coord..new_end]).to_vec();
+                        let signal = convert(signal);
+                        let raw_attrs = HashMap::from([
+                            ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
+                            ("end_reason", RawAttrsOpts::EndReason(to_write_info.end_reason)),
+                            ("median_before", RawAttrsOpts::MedianBefore(100.0)),
+                            ("read_id", RawAttrsOpts::ReadId(to_write_info.read_id.as_str())),
+                            ("read_number", RawAttrsOpts::ReadNumber(to_write_info.read_number as i32)),
+                            ("start_mux", RawAttrsOpts::StartMux(to_write_info.start_mux)),
+                            ("start_time", RawAttrsOpts::StartTime(to_write_info.start_time)),
+                        ]);
+                        let channel_info = ChannelInfo::new(8192_f64, 6.0, 1500.0, 4000.0, to_write_info.channel_number.clone());
+                        multi
+                        .create_empty_read(
+                            to_write_info.read_id.clone(),
+                            run_id.clone(),
+                            &tracking_id,
+                            &context_tags,
+                            channel_info,
+                            &raw_attrs,
+                            signal
+                        ).unwrap();
+                    }
+                    file_counter += 1;
+                    read_numbers_seen.clear();
+                }                
+            }
+        }
+    });
+    complete_read_tx
+} 
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no
 /// effect on the run itself, but could be implemented to do so in the future if required.
@@ -172,7 +315,11 @@ fn unblock_reads(
         .get_mut(channel_number as usize)
         .expect("Failed on channel {channel_number}");
     value.read.clear();
-    value.read_id = String::from("");
+    // set the was unblocked field for writing out
+    value.was_unblocked = true;
+    value.write_out = true;
+    // end reason of unblock
+    value.end_reason = 4;
     (
         get_live_reads_response::ActionResponse {
             action_id,
@@ -222,7 +369,7 @@ fn read_species_distribution(json_file_path: &Path) -> WeightedIndex<usize> {
 
 /// Creates Memory mapped views of the precalculated numpy arrays of squiggle for reference genomes, generated by make_squiggle.py
 ///
-/// Returns a Hashamap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
+/// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
 fn read_views_of_data(
     files: [&str; 2],
 ) -> HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<u8>, Dim<[usize; 1]>>)> {
@@ -238,7 +385,7 @@ fn read_views_of_data(
     views
 }
 
-/// TODO check if channels start at 1?
+/// 
 /// Create and return a Vec that stores the internal data generate thread state. Also populate the shared state Vec that provides data to the GRPC endpoint
 ///  with empty ReadChunk structs. Only called once, when the server is booted up.
 ///
@@ -254,7 +401,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
     let thread_safe_chunks = Arc::clone(&thread_safe);
 
     let mut num = thread_safe_chunks.lock().unwrap();
-    for _ in 0..size {
+    for channel_number in 0..size {
         // setup the mutex vec
         let empty_read_chunk = ReadChunk {
             raw_data: vec![],
@@ -269,6 +416,15 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             read: vec![],
             stop_receiving: false,
             read_number: 0,
+            start_coord: 0,
+            stop_coord: 0,
+            was_unblocked: false,
+            file_name: "".to_string(),
+            write_out: false, 
+            start_time: 0,
+            channel_number: channel_number.to_string(),
+            end_reason: 0,
+            start_mux: 1
         };
         channel_read_info.push(read_info);
     }
@@ -289,11 +445,19 @@ fn generate_read(
     // make sure the read data is clear and set stop receieivng to false so we don't accidentally keep the read
     value.read.clear();
     value.stop_receiving = false;
-    // ne read, so don't ignore it on the actual sgrpc side
+    // update as this read hasn't yet been unblocked
+    value.was_unblocked = false;
+    // signal psoitive end_reason
+    value.end_reason = 1;
+    // we want to write this out at the end
+    value.write_out = true;
+    // read start time in samples (seconds * 4000)
+    value.start_time = Utc::now().timestamp() as u64;
+
+    // new read, so don't ignore it on the actual grpc side
     read_chunk.ignore_me_lol = false;
-    // chance to acquire
     value.read_number = *read_number;
-    let file_choice = files[dist.sample(rng)];
+    let file_choice: &str = files[dist.sample(rng)];
     let file_info = &views[file_choice];
     // start point in file
     let start: usize = rng.gen_range(0..file_info.0 - 1000) as usize;
@@ -304,6 +468,10 @@ fn generate_read(
     value
         .read
         .append(&mut file_info.1.slice(s![start..end]).to_vec());
+    // set the info we need to write the file out
+    value.file_name = file_choice.to_string();
+    value.start_coord = start;
+    value.stop_coord = end;
     let read_id = Uuid::new_v4().to_string();
     value.read_id = read_id;
 }
@@ -325,7 +493,7 @@ fn increment_shared_read(value: &mut ReadInfo, chunk_size: &usize, read_chunk: &
 }
 
 impl DataServiceServicer {
-    pub fn new(size: usize) -> DataServiceServicer {
+    pub fn new(size: usize, run_id: String) -> DataServiceServicer {
         assert!(size > 0);
         let now = Instant::now();
         let json_file_path = Path::new("distributions.json");
@@ -353,6 +521,8 @@ impl DataServiceServicer {
         let dist = read_species_distribution(json_file_path);
         let views = read_views_of_data(files);
 
+        let complete_read_tx = start_write_out_thread(run_id);
+
         // start the thread to generate data
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
@@ -374,9 +544,8 @@ impl DataServiceServicer {
                 let start = now.elapsed().as_millis();
                 thread::sleep(Duration::from_millis(400));
 
-                let mut num = thread_safe.lock().unwrap();
                 let received: Vec<GetLiveReadsRequest> = rx.try_iter().collect();
-
+                let mut num = thread_safe.lock().unwrap();
                 // We have like some actions to adress before we do anything, if this is
                 // fast enough we don't have to thread it
                 if !received.is_empty() {
@@ -414,6 +583,10 @@ impl DataServiceServicer {
                     let read_chunk = num.get_mut(i).unwrap();
                     let value = channel_read_info.get_mut(i).unwrap();
                     if value.read.is_empty() {
+                        if value.write_out {
+                            complete_read_tx.send(value.clone()).unwrap();
+                        }
+                        value.write_out = false;
                         // chance to aquire a read
                         if rand::thread_rng().gen_bool(0.07) {
                             read_number += 1;
@@ -437,13 +610,8 @@ impl DataServiceServicer {
                     if !value.read.is_empty() {
                         channels_with_reads += 1;
                     }
-                    // read_chunks_counts[(read_chunk.raw_data.len() / 4000)] += 1;
                 }
                 info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
-                // debug!("Reads incremented {reads_incremented}");
-                // debug!("Reaads_newly generate {reads_generated}");
-                // info!("Chunk ;engh distribution {:#?}", read_chunks_counts);
-
                 let _end = now.elapsed().as_millis() - start;
             }
         });
@@ -547,7 +715,7 @@ impl DataService for DataServiceServicer {
                     }
 
                 }
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(250));
             }
         };
 
