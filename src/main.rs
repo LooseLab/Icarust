@@ -16,6 +16,7 @@ extern crate log;
 /// Import all our definied services
 mod services;
 use serde::Deserialize;
+use uuid::Uuid;
 use std::fs;
 use toml;
 use tonic::transport::Server;
@@ -47,6 +48,10 @@ struct Config {
     sample_name: String,
     experiment_name: String,
     flowcell_name: String,
+    experiment_duration_set: String, 
+    device_id: String,
+    position: String,
+
 }
 
 /// Loads our config TOML to get the sample name, experiment name and flowcell name, which is returned as a Config struct.
@@ -68,10 +73,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr_manager = "127.0.0.1:10000".parse().unwrap();
     let addr_position = "127.0.0.1:10001".parse().unwrap();
+    let run_id = Uuid::new_v4().to_string().replace("-", "");
 
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
-            name: String::from("Bantersaurus"),
+            name: config.device_id,
             state: 1,
             rpc_ports: Some(RpcPorts {
                 secure: 8000,
@@ -103,7 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let devi_svc = DeviceServiceServer::new(Device {});
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {});
     let protocol_svc = ProtocolServiceServer::new(Protocol {});
-    let data_svc = DataServiceServer::new(DataServiceServicer::new(3000));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(3000, run_id));
 
     Server::builder()
         .add_service(log_svc)
