@@ -2,3 +2,5 @@
 .vscode/settings.json
 *Cargo.lock
 *.idea*
+/test_basecall
+*.fast5
