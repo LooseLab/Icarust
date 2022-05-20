@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 use std::{thread, u8};
-use uuid::Uuid;
 
+use uuid::Uuid;
 use env_logger::Env;
 use memmap2::Mmap;
 use ndarray::{s, ArrayBase, ArrayView1, Dim, ViewRepr};
@@ -37,7 +37,7 @@ use tonic::{Request, Response, Status};
 use chrono::prelude::*;
 use frust5_api::*;
 use fnv::FnvHashSet;
-
+use byteorder::{ByteOrder, LittleEndian};
 
 use crate::_load_toml;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -56,7 +56,7 @@ const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
 const STD_DEV: f64 = 3000.0;
 #[derive(Debug, Deserialize, Clone)]
 struct ReadChunk {
-    raw_data: Vec<u8>,
+    raw_data: Vec<i16>,
     read_id: String,
     ignore_me_lol: bool,
     read_number: u32,
@@ -103,7 +103,7 @@ struct Weights {
 #[derive(Debug, Deserialize, Clone)]
 struct ReadInfo {
     read_id: String,
-    read: Vec<u8>,
+    read: Vec<i16>,
     stop_receiving: bool,
     read_number: u32,
     start_coord: usize,
@@ -124,9 +124,13 @@ fn extend_unblocked_reads(normal: Normal<f64>, end: usize) -> usize {
     end + addition
 }
 
-fn convert(b: Vec<u8>) -> Vec<i16> {
-    b.into_iter().map(|f| f as i16).collect()
+/// Convert our i16 signal to bytes to be transferred to the read until API
+fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
+    let mut dst: Vec<u8> = vec![0; raw_data.len()*2];
+    LittleEndian::write_i16_into(&raw_data, &mut dst);
+    dst
 }
+
 
 /// Start the thread that will ahndle writing out the FAST5 file,
 fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
@@ -203,6 +207,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                     let mut multi =
                     MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
                     for to_write_info in read_infos.drain(..4000) {
+                        // skip this read if we are trying to write it out twice
                         if !read_numbers_seen.insert(to_write_info.read_number){
                             continue
                         }
@@ -210,7 +215,6 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                         let file_info = &views[to_write_info.file_name.as_str()];
                         let new_end: usize = cmp::min(new_end, file_info.0 - 1);
                         let signal = file_info.1.slice(s![to_write_info.start_coord..new_end]).to_vec();
-                        let signal = convert(signal);
                         let raw_attrs = HashMap::from([
                             ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
                             ("end_reason", RawAttrsOpts::EndReason(to_write_info.end_reason)),
@@ -372,13 +376,13 @@ fn read_species_distribution(json_file_path: &Path) -> WeightedIndex<usize> {
 /// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
 fn read_views_of_data(
     files: [&str; 2],
-) -> HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<u8>, Dim<[usize; 1]>>)> {
+) -> HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>)> {
     let mut views = HashMap::new();
     for file_path in files {
         let file = File::open(file_path).unwrap();
         let mmap = unsafe { Mmap::map(&file).unwrap() };
-        let view: ArrayBase<ViewRepr<&u8>, Dim<[usize; 1]>> =
-            ArrayView1::<u8>::view_npy(&mmap).unwrap();
+        let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
+            ArrayView1::<i16>::view_npy(&mmap).unwrap();
         let size = view.shape()[0];
         views.insert(file_path, (size, view.to_owned()));
     }
@@ -422,7 +426,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             file_name: "".to_string(),
             write_out: false, 
             start_time: 0,
-            channel_number: channel_number.to_string(),
+            channel_number: (channel_number + 1).to_string(),
             end_reason: 0,
             start_mux: 1
         };
@@ -437,7 +441,7 @@ fn generate_read(
     files: [&str; 2],
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
-    views: &HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<u8>, Dim<[usize; 1]>>)>,
+    views: &HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>)>,
     normal: Normal<f64>,
     rng: &mut ThreadRng,
     read_number: &mut u32,
@@ -481,7 +485,7 @@ fn generate_read(
 ///
 fn increment_shared_read(value: &mut ReadInfo, chunk_size: &usize, read_chunk: &mut ReadChunk) {
     let ran = min(value.read.len(), *chunk_size);
-    let mut a: Vec<u8> = value.read.drain(..ran).collect();
+    let mut a: Vec<i16> = value.read.drain(..ran).collect();
 
     // issued a stop receiving so no more data sent please
     if value.stop_receiving {
@@ -489,6 +493,7 @@ fn increment_shared_read(value: &mut ReadInfo, chunk_size: &usize, read_chunk: &
     } else {
         read_chunk.raw_data.append(&mut a);
         read_chunk.read_id = value.read_id.clone();
+        read_chunk.read_number = value.read_number.clone();
     }
 }
 
@@ -671,7 +676,7 @@ impl DataService for DataServiceServicer {
                 let mut container = vec![];
                 let size = channel_size as f64 / 24 as f64;
                 let size = size.ceil() as usize;
-                let mut channel: u32 = 0;
+                let mut channel: u32 = 1;
                 let mut num_reads_stop_receiving = 0;
                 let mut num_channels_empty = 0;
                 // magic splitting into 24 reads using a drain like wow magic
@@ -690,9 +695,9 @@ impl DataService for DataServiceServicer {
                                 number: 0,
                                 start_sample: 0,
                                 chunk_start_sample: 0,
-                                chunk_length: 0,
+                                chunk_length:  read_chunk.raw_data.len() as u64,
                                 chunk_classifications: vec![83],
-                                raw_data: read_chunk.raw_data,
+                                raw_data: convert_to_u8(read_chunk.raw_data),
                                 median_before: 225.0,
                                 median: 110.0,
 
@@ -729,9 +734,9 @@ impl DataService for DataServiceServicer {
     ) -> Result<Response<GetDataTypesResponse>, Status> {
         Ok(Response::new(GetDataTypesResponse {
             uncalibrated_signal: Some(DataType {
-                r#type: 2,
+                r#type: 0,
                 big_endian: false,
-                size: 4,
+                size: 2,
             }),
             calibrated_signal: Some(DataType {
                 r#type: 0,
