@@ -692,7 +692,7 @@ impl DataService for DataServiceServicer {
                         if !read_chunk.ignore_me_lol && read_chunk.raw_data.len() > 0{
                             h.insert(channel, ReadData{
                                 id: read_chunk.read_id,
-                                number: 0,
+                                number: read_chunk.read_number,
                                 start_sample: 0,
                                 chunk_start_sample: 0,
                                 chunk_length:  read_chunk.raw_data.len() as u64,
