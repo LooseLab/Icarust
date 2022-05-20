@@ -134,7 +134,7 @@ def generate_squiggle(seq: pyfastx.Sequence) -> None:
     seq_len = len(seq)
     chunk_size = 100_000
     n = 1 / np.sqrt(2)
-    arr = np.array([], dtype=np.uint8)
+    arr = np.array([], dtype=np.int16)
 
     for i in trange(0, seq_len, chunk_size):
         seq_segment = seq[i: i+chunk_size]
