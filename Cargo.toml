@@ -28,6 +28,7 @@ ndarray = "0.15.0"
 memmap2 = "0.5.3"
 rm-frust5-api = "0.0.3"
 chrono = "0.4"
+byteorder = "1"
 
 [build-dependencies]
 tonic-build = "0.6"
