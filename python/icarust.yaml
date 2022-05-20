@@ -4,7 +4,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.9
+  - python==3.9
   - pip
   - pip:
       grpcio==1.43.0
