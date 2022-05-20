@@ -14,3 +14,4 @@ dependencies:
       - pyfastx
       - rich
       - git+https://github.com/alexomics/scrappie#subdirectory=python
+      - tqdm
