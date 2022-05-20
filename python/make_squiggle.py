@@ -142,7 +142,7 @@ def generate_squiggle(seq: pyfastx.Sequence) -> None:
             str(seq_segment), rescale=True).data(as_numpy=True, sloika=False)
         new_squiggle = expandy(squiggle, n)
         new_squiggle = (((new_squiggle * stdev) + mean) * digitisation) / range_scale
-        new_squiggle = new_squiggle.astype(np.uint8)
+        new_squiggle = new_squiggle.astype(np.int16)
         arr = np.concatenate([arr[:], new_squiggle])[:]
     np.save(f"../{seq.name}.squiggle", arr=arr)
 
