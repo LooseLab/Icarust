@@ -405,7 +405,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
     let thread_safe_chunks = Arc::clone(&thread_safe);
 
     let mut num = thread_safe_chunks.lock().unwrap();
-    for channel_number in 0..size {
+    for channel_number in 1..size+1 {
         // setup the mutex vec
         let empty_read_chunk = ReadChunk {
             raw_data: vec![],
@@ -426,7 +426,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             file_name: "".to_string(),
             write_out: false, 
             start_time: 0,
-            channel_number: (channel_number + 1).to_string(),
+            channel_number: channel_number.to_string(),
             end_reason: 0,
             start_mux: 1
         };
