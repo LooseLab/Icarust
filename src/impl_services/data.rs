@@ -316,8 +316,8 @@ fn unblock_reads(
 ) -> (get_live_reads_response::ActionResponse, usize, usize) {
     // need a way of picking out channel by channel number or read ID, lets go by channel number for now -> lame but might work
     let value = channel_read_info
-        .get_mut(channel_number as usize)
-        .expect("Failed on channel {channel_number}");
+        .get_mut((channel_number -1) as usize)
+        .expect(format!("Failed on channel {}", channel_number).as_str());
     value.read.clear();
     // set the was unblocked field for writing out
     value.was_unblocked = true;
@@ -342,7 +342,7 @@ fn stop_sending_read(
     channel_read_info: &mut Vec<ReadInfo>,
 ) -> (get_live_reads_response::ActionResponse, usize, usize) {
     // need a way of picking out channel by channel number or read ID
-    let value = channel_read_info.get_mut(channel_number as usize).unwrap();
+    let value = channel_read_info.get_mut((channel_number -1) as usize).unwrap();
     value.stop_receiving = true;
     (
         get_live_reads_response::ActionResponse {
