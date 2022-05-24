@@ -20,6 +20,10 @@ use uuid::Uuid;
 use std::fs;
 use toml;
 use tonic::transport::Server;
+use tokio_rustls::{
+    rustls::{Certificate, PrivateKey, ServerConfig},
+    TlsAcceptor,
+};
 
 use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::analysis_configuration::Analysis;
@@ -80,10 +84,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: config.device_id,
             state: 1,
             rpc_ports: Some(RpcPorts {
-                secure: 8000,
+                secure: 10001,
                 insecure: 10001,
-                secure_grpc_web: 0,
-                insecure_grpc_web: 0,
             }),
             location: Some(Location { x: 1, y: 1 }),
             error_info: "Unknown state, please help".to_string(),
@@ -91,6 +93,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             is_integrated: true,
             can_sequence_offline: true,
         }],
+    };
+    let certs = {
+        let fd = std::fs::File::open("examples/data/tls/server.pem")?;
+        let mut buf = std::io::BufReader::new(&fd);
+        rustls_pemfile::certs(&mut buf)?
+            .into_iter()
+            .map(Certificate)
+            .collect()
+    };
+    let key = {
+        let fd = std::fs::File::open("examples/data/tls/server.key")?;
+        let mut buf = std::io::BufReader::new(&fd);
+        rustls_pemfile::pkcs8_private_keys(&mut buf)?
+            .into_iter()
+            .map(PrivateKey)
+            .next()
+            .unwrap()
+
+        // let key = std::fs::read("examples/data/tls/server.key")?;
+        // PrivateKey(key)
     };
     // Create the manager server and add the ervice to it
     let svc = ManagerServiceServer::new(manager_init);
