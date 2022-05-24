@@ -16,6 +16,7 @@ use crate::services::minknow_api::manager::{
 use crate::services::minknow_api::instance::get_version_info_response::MinknowVersion;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+
 use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
@@ -31,16 +32,16 @@ impl ManagerService for Manager {
     ) -> Result<Response<GetVersionInfoResponse>, Status> {
         Ok(Response::new(GetVersionInfoResponse {
             minknow: Some(MinknowVersion {
-                major: 4,
+                major: 5,
                 minor: 0,
                 patch: 0,
-                full: "4.0.0".to_string(),
+                full: "5.0.0".to_string(),
             }),
             protocols: "0.0.0.0".to_string(),
             distribution_version: "unknown".to_string(),
             distribution_status: 0,
             guppy_build_version: "banter".to_string(),
-            guppy_connected_version: "4.0.0".to_string(),
+            guppy_connected_version: "5.0.0".to_string(),
             configuration: "0.0.0.0".to_string(),
             installation_type: 0,
         }))
