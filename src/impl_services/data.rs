@@ -109,6 +109,7 @@ struct ReadInfo {
     start_coord: usize,
     stop_coord: usize,
     was_unblocked: bool,
+    unblock_stop_coord: usize,
     file_name: String,
     write_out: bool,
     start_time: u64,
@@ -211,7 +212,10 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                         if !read_numbers_seen.insert(to_write_info.read_number){
                             continue
                         }
-                        let new_end = extend_unblocked_reads(normal, to_write_info.stop_coord);
+                        let mut new_end = to_write_info.stop_coord;
+                        if to_write_info.was_unblocked{
+                            new_end = extend_unblocked_reads(normal, to_write_info.unblock_stop_coord);
+                        }         
                         let file_info = &views[to_write_info.file_name.as_str()];
                         let new_end: usize = cmp::min(new_end, file_info.0 - 1);
                         let signal = file_info.1.slice(s![to_write_info.start_coord..new_end]).to_vec();
@@ -318,6 +322,7 @@ fn unblock_reads(
     let value = channel_read_info
         .get_mut((channel_number -1) as usize)
         .expect(format!("Failed on channel {}", channel_number).as_str());
+    value.unblock_stop_coord = value.stop_coord - value.read.len();
     value.read.clear();
     // set the was unblocked field for writing out
     value.was_unblocked = true;
@@ -423,6 +428,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             start_coord: 0,
             stop_coord: 0,
             was_unblocked: false,
+            unblock_stop_coord: 0,
             file_name: "".to_string(),
             write_out: false, 
             start_time: 0,
