@@ -16,10 +16,10 @@ extern crate log;
 /// Import all our definied services
 mod services;
 use serde::Deserialize;
-use uuid::Uuid;
 use std::fs;
 use toml;
 use tonic::transport::Server;
+use uuid::Uuid;
 
 use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::analysis_configuration::Analysis;
@@ -48,10 +48,9 @@ struct Config {
     sample_name: String,
     experiment_name: String,
     flowcell_name: String,
-    experiment_duration_set: String, 
+    experiment_duration_set: String,
     device_id: String,
     position: String,
-
 }
 
 /// Loads our config TOML to get the sample name, experiment name and flowcell name, which is returned as a Config struct.
