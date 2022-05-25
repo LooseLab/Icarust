@@ -24,8 +24,11 @@ use std::time::Duration;
 use std::time::Instant;
 use std::{thread, u8};
 
-use uuid::Uuid;
+use byteorder::{ByteOrder, LittleEndian};
+use chrono::prelude::*;
 use env_logger::Env;
+use fnv::FnvHashSet;
+use frust5_api::*;
 use memmap2::Mmap;
 use ndarray::{s, ArrayBase, ArrayView1, Dim, ViewRepr};
 use ndarray_npy::ViewNpyExt;
@@ -34,10 +37,7 @@ use rand::prelude::*;
 use rand_distr::{Distribution, Normal};
 use serde::Deserialize;
 use tonic::{Request, Response, Status};
-use chrono::prelude::*;
-use frust5_api::*;
-use fnv::FnvHashSet;
-use byteorder::{ByteOrder, LittleEndian};
+use uuid::Uuid;
 
 use crate::_load_toml;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -115,35 +115,37 @@ struct ReadInfo {
     start_time: u64,
     start_mux: u8,
     end_reason: u8,
-    channel_number: String
+    channel_number: String,
 }
 
 /// Add on between 0.7 and 1.5 of a chunk onto unblocked reads
 fn extend_unblocked_reads(normal: Normal<f64>, end: usize) -> usize {
-    let addition = normal.sample(&mut rand::thread_rng()) * 4000_f64;
+    let addition = normal.sample(&mut rand::thread_rng()) * 1600_f64;
     let addition = addition.floor() as usize;
     end + addition
 }
 
 /// Convert our i16 signal to bytes to be transferred to the read until API
 fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
-    let mut dst: Vec<u8> = vec![0; raw_data.len()*2];
+    let mut dst: Vec<u8> = vec![0; raw_data.len() * 2];
     LittleEndian::write_i16_into(&raw_data, &mut dst);
     dst
 }
-
 
 /// Start the thread that will ahndle writing out the FAST5 file,
 fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
     thread::spawn(move || {
-        let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(6000);
+        let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
         let config = _load_toml("config.toml");
         let context_tags = HashMap::from([
             ("barcoding_enabled", "0"),
-            ("experiment_duration_set", config.experiment_duration_set.as_str()),
+            (
+                "experiment_duration_set",
+                config.experiment_duration_set.as_str(),
+            ),
             ("experiment_type", "genomic_dna"),
             ("local_basecalling", "0"),
             ("package", "bream4"),
@@ -172,7 +174,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                 "sequencing/sequencing_MIN106_DNA,FLO-MIN106,SQK-LSK109",
             ),
             ("exp_script_purpose", "sequencing_run"),
-            ("exp_start_time", ""),
+            ("exp_start_time", iso_time.as_str()),
             ("flow_cell_id", config.flowcell_name.as_str()),
             ("flow_cell_product_code", "FLO-MIN106"),
             ("guppy_version", "5.0.17+99baa5b"),
@@ -192,62 +194,89 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
             ("usb_config", "fx3_1.2.4#fpga_1.2.1#bulk#USB300"),
             ("version", "4.4.3"),
         ]);
-        let mut read_numbers_seen: FnvHashSet<u32> = FnvHashSet::with_capacity_and_hasher(4000, Default::default());
+        let mut read_numbers_seen: FnvHashSet<String> =
+            FnvHashSet::with_capacity_and_hasher(4000, Default::default());
         let files = ["NC_002516.2.squiggle.npy", "NC_003997.3.squiggle.npy"];
         let views = read_views_of_data(files);
-        let normal: Normal<f64> = Normal::new(1.1, 0.1).unwrap();
+        let normal: Normal<f64> = Normal::new(1.0, 0.1).unwrap();
         let mut file_counter = 0;
         // loop to collect reads and write out files
         loop {
-
-            for finished_read_info in complete_read_rx.try_iter(){
+            for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
-                if read_infos.len() >= 4000{
-                    let fast5_file_name = format!("{}_pass_{}_{}.fast5", config.flowcell_name, &run_id[0..6], file_counter);
+                if read_infos.len() >= 4000 {
+                    let fast5_file_name = format!(
+                        "{}_pass_{}_{}.fast5",
+                        config.flowcell_name,
+                        &run_id[0..6],
+                        file_counter
+                    );
                     // drain 4000 reads and write them into a FAST5 file
-                    let mut multi =
-                    MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
+                    let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
                     for to_write_info in read_infos.drain(..4000) {
                         // skip this read if we are trying to write it out twice
-                        if !read_numbers_seen.insert(to_write_info.read_number){
-                            continue
+                        if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
+                            continue;
                         }
                         let mut new_end = to_write_info.stop_coord;
-                        if to_write_info.was_unblocked{
-                            new_end = extend_unblocked_reads(normal, to_write_info.unblock_stop_coord);
-                        }         
+                        if to_write_info.was_unblocked {
+                            new_end =
+                                extend_unblocked_reads(normal, to_write_info.unblock_stop_coord);
+                        }
                         let file_info = &views[to_write_info.file_name.as_str()];
                         let new_end: usize = cmp::min(new_end, file_info.0 - 1);
-                        let signal = file_info.1.slice(s![to_write_info.start_coord..new_end]).to_vec();
+                        let signal = file_info
+                            .1
+                            .slice(s![to_write_info.start_coord..new_end])
+                            .to_vec();
                         let raw_attrs = HashMap::from([
                             ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
-                            ("end_reason", RawAttrsOpts::EndReason(to_write_info.end_reason)),
+                            (
+                                "end_reason",
+                                RawAttrsOpts::EndReason(to_write_info.end_reason),
+                            ),
                             ("median_before", RawAttrsOpts::MedianBefore(100.0)),
-                            ("read_id", RawAttrsOpts::ReadId(to_write_info.read_id.as_str())),
-                            ("read_number", RawAttrsOpts::ReadNumber(to_write_info.read_number as i32)),
+                            (
+                                "read_id",
+                                RawAttrsOpts::ReadId(to_write_info.read_id.as_str()),
+                            ),
+                            (
+                                "read_number",
+                                RawAttrsOpts::ReadNumber(to_write_info.read_number as i32),
+                            ),
                             ("start_mux", RawAttrsOpts::StartMux(to_write_info.start_mux)),
-                            ("start_time", RawAttrsOpts::StartTime(to_write_info.start_time)),
+                            (
+                                "start_time",
+                                RawAttrsOpts::StartTime(to_write_info.start_time),
+                            ),
                         ]);
-                        let channel_info = ChannelInfo::new(8192_f64, 6.0, 1500.0, 4000.0, to_write_info.channel_number.clone());
+                        let channel_info = ChannelInfo::new(
+                            8192_f64,
+                            6.0,
+                            1500.0,
+                            4000.0,
+                            to_write_info.channel_number.clone(),
+                        );
                         multi
-                        .create_empty_read(
-                            to_write_info.read_id.clone(),
-                            run_id.clone(),
-                            &tracking_id,
-                            &context_tags,
-                            channel_info,
-                            &raw_attrs,
-                            signal
-                        ).unwrap();
+                            .create_empty_read(
+                                to_write_info.read_id.clone(),
+                                run_id.clone(),
+                                &tracking_id,
+                                &context_tags,
+                                channel_info,
+                                &raw_attrs,
+                                signal,
+                            )
+                            .unwrap();
                     }
                     file_counter += 1;
                     read_numbers_seen.clear();
-                }                
+                }
             }
         }
     });
     complete_read_tx
-} 
+}
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no
 /// effect on the run itself, but could be implemented to do so in the future if required.
@@ -280,12 +309,13 @@ fn take_actions(
     action_request: get_live_reads_request::Request,
     response_carrier: &Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
     channel_read_info: &mut Vec<ReadInfo>,
+    channel_numbers_actioned: &mut [u32; 3000],
 ) -> (usize, usize, usize) {
     // check that we have an action type and not a setup, whihc should be impossible
     debug!("Processing non setup actions");
     let (unblocks_processed, stop_rec_processed) = match action_request {
         get_live_reads_request::Request::Actions(actions) => {
-            let mut add_response = response_carrier.lock().unwrap();
+            // let mut add_response = response_carrier.lock().unwrap();
             let mut unblocks_processed: usize = 0;
             let mut stop_rec_processed: usize = 0;
 
@@ -293,14 +323,19 @@ fn take_actions(
             for action in actions.actions {
                 let action_type = action.action.unwrap();
                 let (action_response, unblock_count, stopped_count) = match action_type {
-                    action::Action::Unblock(unblock) => {
-                        unblock_reads(unblock, action.action_id, action.channel, channel_read_info)
-                    }
+                    action::Action::Unblock(unblock) => unblock_reads(
+                        unblock,
+                        action.action_id,
+                        action.channel,
+                        action.read.unwrap(),
+                        channel_numbers_actioned,
+                        channel_read_info,
+                    ),
                     action::Action::StopFurtherData(stop) => {
                         stop_sending_read(stop, action.action_id, action.channel, channel_read_info)
                     }
                 };
-                add_response.push(action_response);
+                // add_response.push(action_response);
                 unblocks_processed += unblock_count;
                 stop_rec_processed += stopped_count;
             }
@@ -316,12 +351,28 @@ fn unblock_reads(
     _action: get_live_reads_request::UnblockAction,
     action_id: String,
     channel_number: u32,
+    read_number: action::Read,
+    channel_num_to_read_num: &mut [u32; 3000],
     channel_read_info: &mut Vec<ReadInfo>,
-) -> (get_live_reads_response::ActionResponse, usize, usize) {
-    // need a way of picking out channel by channel number or read ID, lets go by channel number for now -> lame but might work
+) -> (
+    Option<get_live_reads_response::ActionResponse>,
+    usize,
+    usize,
+) {
     let value = channel_read_info
-        .get_mut((channel_number -1) as usize)
+        .get_mut((channel_number - 1) as usize)
         .expect(format!("Failed on channel {}", channel_number).as_str());
+    // destructure read number from action request
+    if let action::Read::Number(read_num) = read_number {
+        // check if the last read_num we performed an action on isn't this one, on this channel
+        if channel_num_to_read_num[(channel_number - 1) as usize] == read_num {
+            info!("Ignoring second unblock!");
+            return (None, 0, 0);
+        }
+        // if we are dealing with a new read, set the new read num as the last dealt with read num ath this channel number
+        channel_num_to_read_num[(channel_number - 1) as usize] = read_num;
+    };
+
     value.unblock_stop_coord = value.stop_coord - value.read.len();
     value.read.clear();
     // set the was unblocked field for writing out
@@ -330,10 +381,10 @@ fn unblock_reads(
     // end reason of unblock
     value.end_reason = 4;
     (
-        get_live_reads_response::ActionResponse {
+        Some(get_live_reads_response::ActionResponse {
             action_id,
             response: 0,
-        },
+        }),
         1,
         0,
     )
@@ -345,15 +396,21 @@ fn stop_sending_read(
     action_id: String,
     channel_number: u32,
     channel_read_info: &mut Vec<ReadInfo>,
-) -> (get_live_reads_response::ActionResponse, usize, usize) {
+) -> (
+    Option<get_live_reads_response::ActionResponse>,
+    usize,
+    usize,
+) {
     // need a way of picking out channel by channel number or read ID
-    let value = channel_read_info.get_mut((channel_number -1) as usize).unwrap();
+    let value = channel_read_info
+        .get_mut((channel_number - 1) as usize)
+        .unwrap();
     value.stop_receiving = true;
     (
-        get_live_reads_response::ActionResponse {
+        Some(get_live_reads_response::ActionResponse {
             action_id,
             response: 0,
-        },
+        }),
         0,
         1,
     )
@@ -394,7 +451,7 @@ fn read_views_of_data(
     views
 }
 
-/// 
+///
 /// Create and return a Vec that stores the internal data generate thread state. Also populate the shared state Vec that provides data to the GRPC endpoint
 ///  with empty ReadChunk structs. Only called once, when the server is booted up.
 ///
@@ -410,7 +467,7 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
     let thread_safe_chunks = Arc::clone(&thread_safe);
 
     let mut num = thread_safe_chunks.lock().unwrap();
-    for channel_number in 1..size+1 {
+    for channel_number in 1..size + 1 {
         // setup the mutex vec
         let empty_read_chunk = ReadChunk {
             raw_data: vec![],
@@ -430,11 +487,11 @@ fn setup_channel_vecs(size: usize, thread_safe: &Arc<Mutex<Vec<ReadChunk>>>) -> 
             was_unblocked: false,
             unblock_stop_coord: 0,
             file_name: "".to_string(),
-            write_out: false, 
+            write_out: false,
             start_time: 0,
             channel_number: channel_number.to_string(),
             end_reason: 0,
-            start_mux: 1
+            start_mux: 1,
         };
         channel_read_info.push(read_info);
     }
@@ -452,8 +509,7 @@ fn generate_read(
     rng: &mut ThreadRng,
     read_number: &mut u32,
 ) {
-    // make sure the read data is clear and set stop receieivng to false so we don't accidentally keep the read
-    value.read.clear();
+    // set stop receieivng to false so we don't accidentally keep the read
     value.stop_receiving = false;
     // update as this read hasn't yet been unblocked
     value.was_unblocked = false;
@@ -462,7 +518,7 @@ fn generate_read(
     // we want to write this out at the end
     value.write_out = true;
     // read start time in samples (seconds * 4000)
-    value.start_time = Utc::now().timestamp() as u64;
+    value.start_time = Utc::now().timestamp() as u64 * 4000 as u64;
 
     // new read, so don't ignore it on the actual grpc side
     read_chunk.ignore_me_lol = false;
@@ -548,6 +604,7 @@ impl DataServiceServicer {
             // normal distribution is great news for smooth read length graphs in minoTour
             let normal: Normal<f64> = Normal::new(MEAN_READ_LEN, STD_DEV).unwrap();
             let mut run_setup = RunSetup::new();
+            let mut channel_numbers_actioned = [0; 3000];
 
             loop {
                 debug!("Sequencer mock loop start");
@@ -563,6 +620,7 @@ impl DataServiceServicer {
                     debug!("Actions received");
                     for get_live_req in received {
                         let request_type = get_live_req.request.unwrap();
+                        // match whether we have actions or a setup
                         let (setup_proc, unblock_proc, stop_rec_proc) = match request_type {
                             // set up request
                             get_live_reads_request::Request::Setup(_) => {
@@ -573,6 +631,7 @@ impl DataServiceServicer {
                                 request_type,
                                 &thread_safe_responses,
                                 &mut channel_read_info,
+                                &mut channel_numbers_actioned,
                             ),
                         };
                         total_unblocks_processed += unblock_proc;
