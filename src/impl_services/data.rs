@@ -390,11 +390,6 @@ fn unblock_reads(
         // if we are dealing with a new read, set the new read num as the last dealt with read num ath this channel number
         channel_num_to_read_num[(channel_number - 1) as usize] = read_num;
     };
-
-    value.unblock_stop_coord = value.stop_coord - value.read.len();
-    let unblock_read_len = (value.unblock_stop_coord - value.start_coord) / 4000 * 450;
-    info!("Read len {}", unblock_read_len);
-    value.read.clear();
     // set the was unblocked field for writing out
     value.was_unblocked = true;
     value.write_out = true;
@@ -623,6 +618,7 @@ impl DataServiceServicer {
                         if value.write_out {
                             complete_read_tx.send(value.clone()).unwrap();
                         }
+                        value.read.clear();
                         value.was_unblocked = false;
                         // Could be a slow problem here?
                         value.write_out = false;
