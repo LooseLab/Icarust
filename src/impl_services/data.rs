@@ -338,19 +338,20 @@ fn take_actions(
             let mut read_infos = channel_read_info.lock().unwrap();
             for action in actions.actions {
                 let action_type = action.action.unwrap();
+                let zero_index_channel = action.channel as usize - 1;
                 let (action_response, unblock_count, stopped_count) = match action_type {
                     action::Action::Unblock(unblock) => unblock_reads(
                         unblock,
                         action.action_id,
-                        action.channel,
+                        zero_index_channel,
                         action.read.unwrap(),
                         channel_numbers_actioned,
-                        read_infos.get_mut(action.channel as usize).expect(
+                        read_infos.get_mut(zero_index_channel).expect(
                             format!("failed to unblock on channel {}", action.channel).as_str()
                         ),
                     ),
                     action::Action::StopFurtherData(stop) => {
-                        stop_sending_read(stop, action.action_id, action.channel, read_infos.get_mut(action.channel as usize).expect(
+                        stop_sending_read(stop, action.action_id, zero_index_channel, read_infos.get_mut(zero_index_channel).expect(
                             format!("failed to stop receiving on channel {}", action.channel).as_str()
                         ))
                     }
@@ -370,7 +371,7 @@ fn take_actions(
 fn unblock_reads(
     _action: get_live_reads_request::UnblockAction,
     action_id: String,
-    channel_number: u32,
+    channel_number: usize,
     read_number: action::Read,
     channel_num_to_read_num: &mut [u32; 3000],
     channel_read_info: &mut ReadInfo,
@@ -383,12 +384,12 @@ fn unblock_reads(
     // destructure read number from action request
     if let action::Read::Number(read_num) = read_number {
         // check if the last read_num we performed an action on isn't this one, on this channel
-        if channel_num_to_read_num[(channel_number - 1) as usize] == read_num {
+        if channel_num_to_read_num[channel_number] == read_num {
             info!("Ignoring second unblock!");
             return (None, 0, 0);
         }
         // if we are dealing with a new read, set the new read num as the last dealt with read num ath this channel number
-        channel_num_to_read_num[(channel_number - 1) as usize] = read_num;
+        channel_num_to_read_num[channel_number] = read_num;
     };
     // set the was unblocked field for writing out
     value.was_unblocked = true;
@@ -409,7 +410,7 @@ fn unblock_reads(
 fn stop_sending_read(
     _action: get_live_reads_request::StopFurtherData,
     action_id: String,
-    channel_number: u32,
+    channel_number: usize,
     value: &mut ReadInfo,
 ) -> (
     Option<get_live_reads_response::ActionResponse>,
@@ -714,10 +715,13 @@ impl DataService for DataServiceServicer {
                         if read_info.stop_receiving {
                             num_reads_stop_receiving += 1;
                         }
-                        if !read_info.stop_receiving && !read_info.was_unblocked{
+                        if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0{
                             // don't overslice our read
-                            let stop = min((read_info.chunk_num  as f64 * 4000.0) as usize, read_info.read.len());
                             let start = ((read_info.chunk_num - 0.5) * 4000.0) as usize;
+                            let stop = min((read_info.chunk_num  as f64 * 4000.0) as usize, read_info.read.len());
+                            if start > stop {
+                                continue
+                            }
                             let read_chunk = read_info.read[start..stop].to_vec();
                             if read_chunk.len() > 0 {
                                 h.insert(channel, ReadData{
