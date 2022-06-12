@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 use std::{thread, u8};
+use std::fmt;
 
 use byteorder::{ByteOrder, LittleEndian};
 use chrono::prelude::*;
@@ -38,6 +39,7 @@ use rand_distr::{Distribution, Normal};
 use serde::Deserialize;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
+use resolve_path::PathResolveExt;
 
 use crate::_load_toml;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -52,7 +54,7 @@ use crate::services::setup_conf::get_channel_size;
 
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
-const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
+const MEAN_READ_LEN: f64 = 3000.0 / 450.0 * 4000.0;
 const STD_DEV: f64 = 3000.0;
 
 /// unused
@@ -94,7 +96,7 @@ struct Weights {
 }
 
 /// #Internal to the data generation thread
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct ReadInfo {
     read_id: String,
     read: Vec<i16>,
@@ -107,6 +109,7 @@ struct ReadInfo {
     file_name: String,
     write_out: bool,
     start_time: u64,
+    start_time_seconds: usize,
     start_time_utc: DateTime<Utc>,
     start_mux: u8,
     end_reason: u8,
@@ -114,6 +117,21 @@ struct ReadInfo {
     prev_chunk_start: usize,
     duration: usize,
     time_accessed: DateTime<Utc>,
+}
+
+impl fmt::Debug for ReadInfo {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    write!(f, "{{\n
+        Read Id: {}
+        Stop receiving: {}
+        Data len: {}
+        Read number: {}
+        Was Unblocked: {}
+        Duration: {}
+        Time Started: {}
+        Time Accessed: {}
+        }}", self.read_id, self.stop_receiving, self.read.len(), self.read_number, self.was_unblocked, self.duration, self.start_time_utc, self.time_accessed)
+  }
 }
 
 /// Add on between 0.7 and 1.5 of a chunk onto unblocked reads
@@ -134,10 +152,13 @@ fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
 fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
     thread::spawn(move || {
+        std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
+        info!("{:#?}", "/vbz_plugin".resolve().as_os_str());
         let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
         let config = _load_toml("config.toml");
+        // std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
         let context_tags = HashMap::from([
             ("barcoding_enabled", "0"),
             (
@@ -202,7 +223,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
         loop {
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
-                if read_infos.len() >= 4000 {
+                if read_infos.len() >= 2 {
                     let fast5_file_name = format!(
                         "{}_pass_{}_{}.fast5",
                         config.flowcell_name,
@@ -211,17 +232,24 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                     );
                     // drain 4000 reads and write them into a FAST5 file
                     let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
-                    for to_write_info in read_infos.drain(..4000) {
+                    for to_write_info in read_infos.drain(..2) {
+                        info!("Writing {:#?}", to_write_info);
                         // skip this read if we are trying to write it out twice
                         if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
                             continue;
                         }
-                        let mut new_end = min((to_write_info.prev_chunk_start * 4000) as usize, to_write_info.read.len());
+                        let mut new_end = to_write_info.read.len();
                         if to_write_info.was_unblocked {
-                            new_end =
-                                extend_unblocked_reads(normal, to_write_info.unblock_stop_coord);
+                            let now_time = Utc::now();
+                            let prev_time = to_write_info.time_accessed;
+                            let elapsed_time = now_time.time() - prev_time.time();
+                            let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                            new_end = min(stop, to_write_info.read.len());              
                         }
                         let signal = to_write_info.read[0..new_end].to_vec();
+                        info!("Signal is.....");
+                        info!("{:#?}", signal);
+                        info!("Signal was");
                         let raw_attrs = HashMap::from([
                             ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
                             (
@@ -275,11 +303,12 @@ fn start_unblock_thread(channel_read_info: Arc<Mutex<Vec<ReadInfo>>>, complete_r
     let (tx, rx): (
         SyncSender<GetLiveReadsRequest>,
         Receiver<GetLiveReadsRequest>,
-    ) = sync_channel(3000);
+    ) = sync_channel(6000);
     thread::spawn(move || {
         // We have like some actions to adress before we do anything
         let mut read_numbers_actioned = [0; 3000];
-        debug!("Actions received");
+        let mut total_unblocks = 0;
+        let mut total_sr = 0;
         for get_live_req in rx.iter() {
             let request_type = get_live_req.request.unwrap();
             // match whether we have actions or a setup
@@ -295,8 +324,10 @@ fn start_unblock_thread(channel_read_info: Arc<Mutex<Vec<ReadInfo>>>, complete_r
                     &mut read_numbers_actioned,
                 ),
             };
+            total_unblocks += unblock_proc;
+            total_sr += stop_rec_proc;
+            info!("Unblocked: {}, Stop receiving: {}, Total unblocks {}, total sr {}", unblock_proc, stop_rec_proc, total_unblocks, total_sr);
         }
-        
     });
 
     tx
@@ -503,6 +534,7 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             file_name: "".to_string(),
             write_out: false,
             start_time: 0,
+            start_time_seconds: 0,
             start_time_utc: Utc::now(),
             channel_number: channel_number.to_string(),
             end_reason: 0,
@@ -537,7 +569,8 @@ fn generate_read(
     value.write_out = true;
     // read start time in samples (seconds since start of experiment * 4000)
     value.start_time = (Utc::now().timestamp() as u64 - start_time) * 4000 as u64;
-
+    value.start_time_seconds = (Utc::now().timestamp() as u64 - start_time) as usize;
+    value.start_time_utc = Utc::now();
     value.read_number = read_number.clone();
     let file_choice: &str = files[dist.sample(rng)];
     let file_info = &views[file_choice];
@@ -584,7 +617,6 @@ impl DataServiceServicer {
             .filter_or("MY_LOG_LEVEL", "info")
             .write_style_or("MY_LOG_STYLE", "always");
         env_logger::init_from_env(env);
-        info!("some information log");
         let dist = read_species_distribution(json_file_path);
         let views = read_views_of_data(files);
 
@@ -619,8 +651,11 @@ impl DataServiceServicer {
 
                 for i in 0..channel_size {
                     let value = num.get_mut(i).unwrap();
-                    let read_estimated_finish_time = value.start_time as usize + value.duration;
+                    info!("{:#?}", value);
+                    let read_estimated_finish_time = value.start_time_seconds as usize + value.duration;
+                    // experiment_time is the time the experimanet has started until now
                     let experiment_time = Utc::now().timestamp() as u64 - start_time;
+                    info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
                     // dividing usizes is very innacurate TODO revisit
                     if experiment_time as usize > read_estimated_finish_time || value.was_unblocked {
                         // not unblocked as we send that straight from the unblock thread
@@ -632,7 +667,7 @@ impl DataServiceServicer {
                         // Could be a slow problem here?
                         value.write_out = false;
                         // chance to aquire a read
-                        if rand::thread_rng().gen_bool(0.15) {
+                        if rand::thread_rng().gen_bool(0.99) {
                             read_number += 1;
                             reads_generated += 1;
                             generate_read(
@@ -645,6 +680,11 @@ impl DataServiceServicer {
                                 &mut read_number,
                                 &start_time,
                             )
+                        }
+                    }
+                    else {
+                        if value.read.len() > 0 && !value.was_unblocked{
+                            reads_incremented += 1;
                         }
                     }
                 }
@@ -674,8 +714,6 @@ impl DataService for DataServiceServicer {
         _request: Request<tonic::Streaming<GetLiveReadsRequest>>,
     ) -> Result<Response<Self::get_live_readsStream>, Status> {
         let now2 = Instant::now();
-        let now3 = Utc::now();
-        info!("Received get_live_reads request");
         let mut stream = _request.into_inner();
         let data_lock = Arc::clone(&self.read_data);
         let data_lock_unblock =  Arc::clone(&self.read_data);
@@ -690,29 +728,30 @@ impl DataService for DataServiceServicer {
         let output = async_stream::try_stream! {
             while let Some(live_reads_request) = stream.next().await {
                 let now2 = Instant::now();
-                info!("Received at {:#?}", Utc::now());
+                info!("Received get live read request at {:#?}", Utc::now());
                 let live_reads_request = live_reads_request?;
                 tx.send(live_reads_request).unwrap();
                 let mut z2 = {
-                    debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
+                    info!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
                     // send all the actions we wish to take and send them
                     let mut z1 = data_lock.lock().unwrap();
-                    debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
+                    info!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
                     let mut z2 = z1.clone();
                     mem::drop(z1);
-                    debug!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
+                    info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
                     z2
                 };
                 let mut container = vec![];
-                let size = channel_size as f64 / 24 as f64;
+                let size = channel_size as f64 / 24_f64;
                 let size = size.ceil() as usize;
                 let mut channel: u32 = 1;
-                let mut num_reads_stop_receiving = 0;
-                let mut num_channels_empty = 0;
+                let mut num_reads_stop_receiving: usize = 0;
+                let mut num_channels_empty: usize = 0;
                 // magic splitting into 24 reads using a drain like wow magic
                 for _ in 0..(size){
                     let mut h = HashMap::with_capacity(24);
-                    for read_info in z2.drain(..min(24, z2.len())){
+                    for mut read_info in z2.drain(..min(24, z2.len())){
+                        info!("Elapsed at start of drain {}", now2.elapased().as_millis());
                         if read_info.read.len() == 0 {
                             num_channels_empty += 1;
                         }
@@ -722,7 +761,7 @@ impl DataService for DataServiceServicer {
                         if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
                             // don't overslice our read
                             let start = read_info.prev_chunk_start;
-                            let now_time = Utc::now().time();
+                            let now_time = Utc::now();
                             let prev_time = match read_info.prev_chunk_start {
                                 0 => {
                                     read_info.start_time_utc
@@ -731,7 +770,8 @@ impl DataService for DataServiceServicer {
                                     read_info.time_accessed
                                 }
                             };
-                            let elapsed_time = now_time - prev_time.time();
+                            read_info.time_accessed = now_time;
+                            let elapsed_time = now_time.time() - prev_time.time();
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
                             let stop = min(stop, read_info.read.len());
                             if start > stop || (stop - start) < 1600{
@@ -752,6 +792,7 @@ impl DataService for DataServiceServicer {
 
                                 });
                             }
+                            read_info.prev_chunk_start = stop;
                         }
                         channel += 1;
                     }
