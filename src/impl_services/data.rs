@@ -133,7 +133,7 @@ impl fmt::Debug for ReadInfo {
         Prev Chunk End: {}
         }}", self.read_id, self.stop_receiving, self.read.len(), self.read_number, self.was_unblocked, self.duration, self.start_time_utc, self.time_accessed, self.prev_chunk_start)
   }
-}
+}  
 
 /// Add on between 0.7 and 1.5 of a chunk onto unblocked reads
 fn extend_unblocked_reads(normal: Normal<f64>, end: usize) -> usize {
@@ -779,7 +779,7 @@ impl DataService for DataServiceServicer {
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
                             let stop = min(stop, read_info.read.len());
                             if start > stop || (stop - start) < 1600{
-                                debug!("sample isn't long enough");
+                                info!("sample isn't long enough");
                                 continue
                             }
                             info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
@@ -803,6 +803,7 @@ impl DataService for DataServiceServicer {
                     mem::drop(z2);
                     // info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
                     if container.len() > 0 {
+                        info!("Breaking out");
                         loop_for_data = false;
                     }
                     
@@ -813,6 +814,7 @@ impl DataService for DataServiceServicer {
                 for chunk in container.chunks(24) {
                     for read_data in chunk {
                         channel_data.insert(channel, read_data.clone());
+                        channel += 1;
                     }
                     yield GetLiveReadsResponse{
                         samples_since_start: 0,
@@ -822,11 +824,12 @@ impl DataService for DataServiceServicer {
                     };
                     channel_data.clear();
                 }
+                container.clear();
                 info!("replying {:#?}", now2.elapsed().as_millis());
 
             }
         };
-
+        info!("End of stream");
         Ok(Response::new(Box::pin(output) as Self::get_live_readsStream))
     }
 
