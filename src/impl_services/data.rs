@@ -53,7 +53,7 @@ use crate::services::setup_conf::get_channel_size;
 
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
-const MEAN_READ_LEN: f64 = 3000.0 / 450.0 * 4000.0;
+const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
 const STD_DEV: f64 = 3000.0;
 
 /// unused
@@ -770,12 +770,11 @@ impl DataService for DataServiceServicer {
                             let prev_time = read_info.start_time_utc;
                             let elapsed_time = now_time.time() - prev_time.time();
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
-                            let stop = min(stop, read_info.read.len());
-                            if start > stop || (stop - start) < 1600{
-                                info!("sample isn't long enough ({})", stop as isize - start as isize);
-                                thread::sleep(Duration::from_millis(200));
+                            if start > stop || (stop - start) < 1600 {
                                 continue
                             }
+                            // donm't overslice our read
+                            let stop = min(stop, read_info.read.len());
                             read_info.time_accessed = now_time;
                             info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
                             read_info.prev_chunk_start = stop;
@@ -821,6 +820,7 @@ impl DataService for DataServiceServicer {
                 }
                 container.clear();
                 info!("replying {:#?}", now2.elapsed().as_millis());
+                thread::sleep(Duration::from_millis(250));
 
             }
         };
