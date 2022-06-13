@@ -762,6 +762,7 @@ impl DataService for DataServiceServicer {
                         if read_info.stop_receiving {
                             num_reads_stop_receiving += 1;
                         }
+                        info!("Read is {:#?}", read_info);
                         if (!read_info.stop_receiving || !read_info.was_unblocked) && read_info.read.len() > 0 {
                             // don't overslice our read
                             let start = read_info.prev_chunk_start;
