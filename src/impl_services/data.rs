@@ -767,22 +767,15 @@ impl DataService for DataServiceServicer {
                             // don't overslice our read
                             let start = read_info.prev_chunk_start;
                             let now_time = Utc::now();
-                            let prev_time = match read_info.prev_chunk_start {
-                                0 => {
-                                    read_info.start_time_utc
-                                }
-                                _ => {
-                                    read_info.time_accessed.clone()
-                                }
-                            };
-                            read_info.time_accessed = now_time;
+                            let prev_time = read_info.start_time_utc;
                             let elapsed_time = now_time.time() - prev_time.time();
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
                             let stop = min(stop, read_info.read.len());
                             if start > stop || (stop - start) < 1600{
-                                info!("sample isn't long enough");
+                                info!("sample isn't long enough ({})", stop as isize - start as isize);
                                 continue
                             }
+                            read_info.time_accessed = now_time;
                             info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
                             read_info.prev_chunk_start = stop;
                             let read_chunk = read_info.read[start..stop].to_vec();
