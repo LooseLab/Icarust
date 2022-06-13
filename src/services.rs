@@ -48,6 +48,6 @@ pub mod minknow_api {
 
 pub mod setup_conf {
     pub fn get_channel_size() -> usize {
-        3000
+        1
     }
 }

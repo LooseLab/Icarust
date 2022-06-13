@@ -39,7 +39,6 @@ use rand_distr::{Distribution, Normal};
 use serde::Deserialize;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
-use resolve_path::PathResolveExt;
 
 use crate::_load_toml;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -117,6 +116,7 @@ struct ReadInfo {
     prev_chunk_start: usize,
     duration: usize,
     time_accessed: DateTime<Utc>,
+    time_unblocked: DateTime<Utc>
 }
 
 impl fmt::Debug for ReadInfo {
@@ -130,7 +130,8 @@ impl fmt::Debug for ReadInfo {
         Duration: {}
         Time Started: {}
         Time Accessed: {}
-        }}", self.read_id, self.stop_receiving, self.read.len(), self.read_number, self.was_unblocked, self.duration, self.start_time_utc, self.time_accessed)
+        Prev Chunk End: {}
+        }}", self.read_id, self.stop_receiving, self.read.len(), self.read_number, self.was_unblocked, self.duration, self.start_time_utc, self.time_accessed, self.prev_chunk_start)
   }
 }
 
@@ -152,8 +153,6 @@ fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
 fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
     thread::spawn(move || {
-        std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
-        info!("{:#?}", "/vbz_plugin".resolve().as_os_str());
         let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
@@ -223,7 +222,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
         loop {
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
-                if read_infos.len() >= 2 {
+                if read_infos.len() >= 1 {
                     let fast5_file_name = format!(
                         "{}_pass_{}_{}.fast5",
                         config.flowcell_name,
@@ -232,24 +231,22 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                     );
                     // drain 4000 reads and write them into a FAST5 file
                     let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
-                    for to_write_info in read_infos.drain(..2) {
-                        info!("Writing {:#?}", to_write_info);
+                    for to_write_info in read_infos.drain(..1) {
                         // skip this read if we are trying to write it out twice
                         if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
                             continue;
                         }
                         let mut new_end = to_write_info.read.len();
                         if to_write_info.was_unblocked {
-                            let now_time = Utc::now();
+                            let unblock_time = to_write_info.time_unblocked;
                             let prev_time = to_write_info.time_accessed;
-                            let elapsed_time = now_time.time() - prev_time.time();
+                            let elapsed_time = unblock_time.time() - prev_time.time();
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                            info!("{:#?}", to_write_info);
+                            info!("WE ARE WRITING OUT AN UNBLOCKED READ {} AND THE LENGTH IS FROM 0 to {}", to_write_info.read_id, stop);
                             new_end = min(stop, to_write_info.read.len());              
                         }
                         let signal = to_write_info.read[0..new_end].to_vec();
-                        info!("Signal is.....");
-                        info!("{:#?}", signal);
-                        info!("Signal was");
                         let raw_attrs = HashMap::from([
                             ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
                             (
@@ -396,7 +393,7 @@ fn take_actions(
             }
             (unblocks_processed, stop_rec_processed)
         }
-        _ => (0, 0),
+        _ => panic!(),
     };
     (0, unblocks_processed, stop_rec_processed)
 }
@@ -428,6 +425,8 @@ fn unblock_reads(
     // set the was unblocked field for writing out
     value.was_unblocked = true;
     value.write_out = true;
+    // set the time unblocked so we can work out the length of the read to serve
+    value.time_unblocked = Utc::now();
     // end reason of unblock
     value.end_reason = 4;
     (
@@ -541,7 +540,8 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             start_mux: 1,
             prev_chunk_start: 0,
             duration: 0,
-            time_accessed: Utc::now()
+            time_accessed: Utc::now(),
+            time_unblocked: Utc::now()
         };
         num.push(read_info);
     }
@@ -651,15 +651,12 @@ impl DataServiceServicer {
 
                 for i in 0..channel_size {
                     let value = num.get_mut(i).unwrap();
-                    info!("{:#?}", value);
                     let read_estimated_finish_time = value.start_time_seconds as usize + value.duration;
                     // experiment_time is the time the experimanet has started until now
                     let experiment_time = Utc::now().timestamp() as u64 - start_time;
                     info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
-                    // dividing usizes is very innacurate TODO revisit
                     if experiment_time as usize > read_estimated_finish_time || value.was_unblocked {
-                        // not unblocked as we send that straight from the unblock thread
-                        if value.write_out && !value.was_unblocked {
+                        if value.write_out {
                             complete_read_tx.send(value.clone()).unwrap();
                         }
                         value.read.clear();
@@ -688,7 +685,7 @@ impl DataServiceServicer {
                         }
                     }
                 }
-                info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
+                // info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
                 let _end = now.elapsed().as_millis() - start;
             }
         });
@@ -729,18 +726,9 @@ impl DataService for DataServiceServicer {
             while let Some(live_reads_request) = stream.next().await {
                 let now2 = Instant::now();
                 info!("Received get live read request at {:#?}", Utc::now());
+                info!("{:#?}", live_reads_request);
                 let live_reads_request = live_reads_request?;
                 tx.send(live_reads_request).unwrap();
-                let mut z2 = {
-                    info!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
-                    // send all the actions we wish to take and send them
-                    let mut z1 = data_lock.lock().unwrap();
-                    info!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
-                    let mut z2 = z1.clone();
-                    mem::drop(z1);
-                    info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
-                    z2
-                };
                 let mut container = vec![];
                 let size = channel_size as f64 / 24_f64;
                 let size = size.ceil() as usize;
@@ -748,61 +736,82 @@ impl DataService for DataServiceServicer {
                 let mut num_reads_stop_receiving: usize = 0;
                 let mut num_channels_empty: usize = 0;
                 // magic splitting into 24 reads using a drain like wow magic
-                for _ in 0..(size){
-                    let mut h = HashMap::with_capacity(24);
-                    for mut read_info in z2.drain(..min(24, z2.len())){
-                        info!("Elapsed at start of drain {}", now2.elapased().as_millis());
-                        if read_info.read.len() == 0 {
-                            num_channels_empty += 1;
-                        }
-                        if read_info.stop_receiving {
-                            num_reads_stop_receiving += 1;
-                        }
-                        if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
-                            // don't overslice our read
-                            let start = read_info.prev_chunk_start;
-                            let now_time = Utc::now();
-                            let prev_time = match read_info.prev_chunk_start {
-                                0 => {
-                                    read_info.start_time_utc
-                                }
-                                _ => {
-                                    read_info.time_accessed
-                                }
-                            };
-                            read_info.time_accessed = now_time;
-                            let elapsed_time = now_time.time() - prev_time.time();
-                            let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
-                            let stop = min(stop, read_info.read.len());
-                            if start > stop || (stop - start) < 1600{
-                                continue
+                let mut loop_for_data: bool = true;
+                while loop_for_data {
+                    let mut z2 = {
+                        debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
+                        // send all the actions we wish to take and send them
+                        let mut z1 = data_lock.lock().unwrap();
+                        debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
+                        let mut z2 = z1.clone();
+                        mem::drop(z1);
+                        debug!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
+                        z2
+                    };
+                    for _ in 0..(size){
+                        let mut h = HashMap::with_capacity(24);
+                        for mut read_info in z2.drain(..min(24, z2.len())){
+                            
+                            debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
+                            if read_info.read.len() == 0 {
+                                num_channels_empty += 1;
                             }
-                            let read_chunk = read_info.read[start..stop].to_vec();
-                            if read_chunk.len() > 0 {
-                                h.insert(channel, ReadData{
-                                    id: read_info.read_id,
-                                    number: read_info.read_number.clone(),
-                                    start_sample: 0,
-                                    chunk_start_sample: 0,
-                                    chunk_length:  read_chunk.len() as u64,
-                                    chunk_classifications: vec![83],
-                                    raw_data: convert_to_u8(read_chunk),
-                                    median_before: 225.0,
-                                    median: 110.0,
-
-                                });
+                            if read_info.stop_receiving {
+                                num_reads_stop_receiving += 1;
                             }
-                            read_info.prev_chunk_start = stop;
+                            if (!read_info.stop_receiving || !read_info.was_unblocked) && read_info.read.len() > 0 {
+                                // don't overslice our read
+                                let start = read_info.prev_chunk_start;
+                                let now_time = Utc::now();
+                                let prev_time = match read_info.prev_chunk_start {
+                                    0 => {
+                                        read_info.start_time_utc
+                                    }
+                                    _ => {
+                                        read_info.time_accessed
+                                    }
+                                };
+                                read_info.time_accessed = now_time;
+                                let elapsed_time = now_time.time() - prev_time.time();
+                                let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                                let stop = min(stop, read_info.read.len());
+                                if start > stop || (stop - start) < 1600{
+                                    continue
+                                }
+                                info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
+                                info!("Read info is {:#?}", read_info);
+                                let read_chunk = read_info.read[start..stop].to_vec();
+                                if read_chunk.len() > 0 {
+                                    h.insert(channel, ReadData{
+                                        id: read_info.read_id,
+                                        number: read_info.read_number.clone(),
+                                        start_sample: 0,
+                                        chunk_start_sample: 0,
+                                        chunk_length:  read_chunk.len() as u64,
+                                        chunk_classifications: vec![83],
+                                        raw_data: convert_to_u8(read_chunk),
+                                        median_before: 225.0,
+                                        median: 110.0,
+    
+                                    });
+                                }
+                                read_info.prev_chunk_start = stop;
+                            }
+                            channel += 1;
                         }
-                        channel += 1;
+                        if h.len() > 0{
+                            container.push(h);
+                            loop_for_data = false;
+                        }
                     }
-                    if h.len() > 0{
-                        container.push(h);
-                    }
+                    // reset channel so we don't over total number of channels whilst spinning for data
+                    channel = 1;
+                
                 }
                 for channel_slice in 0..container.len() {
                     debug!("channel slice number is {}", channel_slice);
                     if container[channel_slice].len() > 0 {
+
                         yield GetLiveReadsResponse{
                             samples_since_start: 0,
                             seconds_since_start: 0.0,
