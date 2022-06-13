@@ -773,6 +773,7 @@ impl DataService for DataServiceServicer {
                             let stop = min(stop, read_info.read.len());
                             if start > stop || (stop - start) < 1600{
                                 info!("sample isn't long enough ({})", stop as isize - start as isize);
+                                thread::sleep(Duration::from_millis(200));
                                 continue
                             }
                             read_info.time_accessed = now_time;
