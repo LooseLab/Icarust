@@ -737,7 +737,7 @@ impl DataService for DataServiceServicer {
                 info!("Request loop number is {}", stream_counter);
                 let live_reads_request = live_reads_request?;
                 tx.send(live_reads_request).unwrap();
-            
+                stream_counter += 1
             }
             loop{
                 let now2 = Instant::now();
