@@ -726,21 +726,23 @@ impl DataService for DataServiceServicer {
         let mut stream_counter = 1;
 
         // let is_setup = self.setup.lock().unwrap().clone();
+        tokio::spawn(async move {
+            while let Some(live_reads_request) = stream.next().await {
+                let now2 = Instant::now();
+
+                info!("Received get live read request at {:#?}", Utc::now());
+                info!("{:#?}", live_reads_request);
+                info!("Request loop number is {}", stream_counter);
+                let live_reads_request = live_reads_request.unwrap();
+                tx.send(live_reads_request).unwrap();
+                stream_counter += 1
+            }
+        });
 
         let output = async_stream::try_stream! {
-            tokio::spawn(async move {
-                while let Some(live_reads_request) = stream.next().await {
-                    let now2 = Instant::now();
-    
-                    info!("Received get live read request at {:#?}", Utc::now());
-                    info!("{:#?}", live_reads_request);
-                    info!("Request loop number is {}", stream_counter);
-                    let live_reads_request = live_reads_request.unwrap();
-                    tx.send(live_reads_request).unwrap();
-                    stream_counter += 1
-                }
-            });
 
+
+            
             loop{
                 let now2 = Instant::now();
 
@@ -770,7 +772,7 @@ impl DataService for DataServiceServicer {
                         if read_info.stop_receiving {
                             num_reads_stop_receiving += 1;
                         }
-                        info!("Read is {:#?}", read_info);
+                        // info!("Read is {:#?}", read_info);
                         if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
                             // don't overslice our read
                             let start = read_info.prev_chunk_start;
@@ -784,7 +786,7 @@ impl DataService for DataServiceServicer {
                             // donm't overslice our read
                             let stop = min(stop, read_info.read.len());
                             read_info.time_accessed = now_time;
-                            info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
+                            // info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
                             read_info.prev_chunk_start = stop;
                             let read_chunk = read_info.read[start..stop].to_vec();
                             container.push(ReadData{
