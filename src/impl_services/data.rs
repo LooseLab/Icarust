@@ -726,112 +726,116 @@ impl DataService for DataServiceServicer {
         let mut stream_counter = 1;
 
         // let is_setup = self.setup.lock().unwrap().clone();
-        tokio::spawn(async move {
-            while let Some(live_reads_request) = stream.next().await {
-                let now2 = Instant::now();
-
-                info!("Received get live read request at {:#?}", Utc::now());
-                info!("{:#?}", live_reads_request);
-                info!("Request loop number is {}", stream_counter);
-                let live_reads_request = live_reads_request.unwrap();
-                tx.send(live_reads_request).unwrap();
-                stream_counter += 1
-            }
-        });
 
         let output = async_stream::try_stream! {
+            let (tx2, mut rx2) = tokio::sync::mpsc::channel(200);
+            tokio::spawn(async move {
+                while let Some(live_reads_request) = stream.next().await {
+                    let now2 = Instant::now();
+    
+                    info!("Received get live read request at {:#?}", Utc::now());
+                    info!("{:#?}", live_reads_request);
+                    info!("Request loop number is {}", stream_counter);
+                    let live_reads_request = live_reads_request.unwrap();
+                    tx.send(live_reads_request).unwrap();
+                    stream_counter += 1
+                }
+            });
+            tokio::spawn(async move {
+                loop{
+                    let now2 = Instant::now();
 
-
-            
-            loop{
-                let now2 = Instant::now();
-
-                let mut container: Vec<ReadData> = Vec::with_capacity(3000);
-                let size = channel_size as f64 / 24_f64;
-                let size = size.ceil() as usize;
-                let mut channel: u32 = 1;
-                let mut num_reads_stop_receiving: usize = 0;
-                let mut num_channels_empty: usize = 0;
-                // magic splitting into 24 reads using a drain like wow magic
-                let mut loop_for_data: bool = true;
-                while loop_for_data {
-                    let mut z2 = {
-                        debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
-                        // send all the actions we wish to take and send them
-                        let mut z1 = data_lock.lock().unwrap();
-                        debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
-                        z1
-                    };
-                    let channel_size = get_channel_size();
-                    for i in 0..channel_size {
-                        let mut read_info = z2.get_mut(i).unwrap();
-                        debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
-                        if read_info.read.len() == 0 {
-                            num_channels_empty += 1;
-                        }
-                        if read_info.stop_receiving {
-                            num_reads_stop_receiving += 1;
-                        }
-                        // info!("Read is {:#?}", read_info);
-                        if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
-                            // don't overslice our read
-                            let start = read_info.prev_chunk_start;
-                            let now_time = Utc::now();
-                            let prev_time = read_info.start_time_utc;
-                            let elapsed_time = now_time.time() - prev_time.time();
-                            let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
-                            if start > stop || (stop - start) < 1600 {
-                                continue
+                    let mut container: Vec<ReadData> = Vec::with_capacity(3000);
+                    let size = channel_size as f64 / 24_f64;
+                    let size = size.ceil() as usize;
+                    let mut channel: u32 = 1;
+                    let mut num_reads_stop_receiving: usize = 0;
+                    let mut num_channels_empty: usize = 0;
+                    // magic splitting into 24 reads using a drain like wow magic
+                    let mut loop_for_data: bool = true;
+                    while loop_for_data {
+                        let mut z2 = {
+                            debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
+                            // send all the actions we wish to take and send them
+                            let mut z1 = data_lock.lock().unwrap();
+                            debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
+                            z1
+                        };
+                        let channel_size = get_channel_size();
+                        for i in 0..channel_size {
+                            let mut read_info = z2.get_mut(i).unwrap();
+                            debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
+                            if read_info.read.len() == 0 {
+                                num_channels_empty += 1;
                             }
-                            // donm't overslice our read
-                            let stop = min(stop, read_info.read.len());
-                            read_info.time_accessed = now_time;
-                            // info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
-                            read_info.prev_chunk_start = stop;
-                            let read_chunk = read_info.read[start..stop].to_vec();
-                            container.push(ReadData{
-                                    id: read_info.read_id.clone(),
-                                    number: read_info.read_number.clone(),
-                                    start_sample: 0,
-                                    chunk_start_sample: 0,
-                                    chunk_length:  read_chunk.len() as u64,
-                                    chunk_classifications: vec![83],
-                                    raw_data: convert_to_u8(read_chunk),
-                                    median_before: 225.0,
-                                    median: 110.0,
-    
-                            });
-                            
+                            if read_info.stop_receiving {
+                                num_reads_stop_receiving += 1;
+                            }
+                            // info!("Read is {:#?}", read_info);
+                            if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
+                                // don't overslice our read
+                                let start = read_info.prev_chunk_start;
+                                let now_time = Utc::now();
+                                let prev_time = read_info.start_time_utc;
+                                let elapsed_time = now_time.time() - prev_time.time();
+                                let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                                if start > stop || (stop - start) < 1600 {
+                                    continue
+                                }
+                                // donm't overslice our read
+                                let stop = min(stop, read_info.read.len());
+                                read_info.time_accessed = now_time;
+                                // info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
+                                read_info.prev_chunk_start = stop;
+                                let read_chunk = read_info.read[start..stop].to_vec();
+                                container.push(ReadData{
+                                        id: read_info.read_id.clone(),
+                                        number: read_info.read_number.clone(),
+                                        start_sample: 0,
+                                        chunk_start_sample: 0,
+                                        chunk_length:  read_chunk.len() as u64,
+                                        chunk_classifications: vec![83],
+                                        raw_data: convert_to_u8(read_chunk),
+                                        median_before: 225.0,
+                                        median: 110.0,
+        
+                                });
+                                
+                            }
                         }
+                        mem::drop(z2);
+                        // info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
+                        if container.len() > 0 {
+                            info!("Breaking out");
+                            loop_for_data = false;
+                        }
+                        
+                        // reset channel so we don't over total number of channels whilst spinning for data
                     }
-                    mem::drop(z2);
-                    // info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
-                    if container.len() > 0 {
-                        info!("Breaking out");
-                        loop_for_data = false;
+        
+                    let mut channel_data = HashMap::with_capacity(24);
+                    for chunk in container.chunks(24) {
+                        for read_data in chunk {
+                            channel_data.insert(channel, read_data.clone());
+                            channel += 1;
+                        }
+                        tx2.send(GetLiveReadsResponse{
+                            samples_since_start: 0,
+                            seconds_since_start: 0.0,
+                            channels: channel_data.clone(),
+                            action_responses: vec![]
+                        }).await.unwrap();
+                        channel_data.clear();
                     }
-                    
-                    // reset channel so we don't over total number of channels whilst spinning for data
+                    container.clear();
+                    info!("replying {:#?}", now2.elapsed().as_millis());
+                    thread::sleep(Duration::from_millis(200));
                 }
-    
-                let mut channel_data = HashMap::with_capacity(24);
-                for chunk in container.chunks(24) {
-                    for read_data in chunk {
-                        channel_data.insert(channel, read_data.clone());
-                        channel += 1;
-                    }
-                    yield GetLiveReadsResponse{
-                        samples_since_start: 0,
-                        seconds_since_start: 0.0,
-                        channels: channel_data.clone(),
-                        action_responses: vec![]
-                    };
-                    channel_data.clear();
-                }
-                container.clear();
-                info!("replying {:#?}", now2.elapsed().as_millis());
-                thread::sleep(Duration::from_millis(200));
-            }
+            
+          });
+          while let Some(message) = rx2.recv().await {
+            yield message
+        }
 
         };
         info!("End of stream");
