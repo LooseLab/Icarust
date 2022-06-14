@@ -717,7 +717,6 @@ impl DataService for DataServiceServicer {
         &self,
         _request: Request<tonic::Streaming<GetLiveReadsRequest>>,
     ) -> Result<Response<Self::get_live_readsStream>, Status> {
-        let now2 = Instant::now();
         let mut stream = _request.into_inner();
         let data_lock = Arc::clone(&self.read_data);
         let data_lock_unblock =  Arc::clone(&self.read_data);
@@ -726,19 +725,22 @@ impl DataService for DataServiceServicer {
         let channel_size = get_channel_size();
         let mut stream_counter = 1;
 
-        debug!("Dropped lock {:#?}", now2.elapsed().as_millis());
-
         // let is_setup = self.setup.lock().unwrap().clone();
 
         let output = async_stream::try_stream! {
-            while let Some(live_reads_request) = stream.next().await {
-                info!("Received get live read request at {:#?}", Utc::now());
-                info!("{:#?}", live_reads_request);
-                info!("Request loop number is {}", stream_counter);
-                let live_reads_request = live_reads_request?;
-                tx.send(live_reads_request).unwrap();
-                stream_counter += 1
-            }
+            tokio::spawn(async move {
+                while let Some(live_reads_request) = stream.next().await {
+                    let now2 = Instant::now();
+    
+                    info!("Received get live read request at {:#?}", Utc::now());
+                    info!("{:#?}", live_reads_request);
+                    info!("Request loop number is {}", stream_counter);
+                    let live_reads_request = live_reads_request.unwrap();
+                    tx.send(live_reads_request).unwrap();
+                    stream_counter += 1
+                }
+            });
+
             loop{
                 let now2 = Instant::now();
 
