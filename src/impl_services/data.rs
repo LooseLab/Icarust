@@ -54,7 +54,7 @@ use crate::services::setup_conf::get_channel_size;
 const CHUNK_SIZE_1S: usize = 4000;
 const BREAK_READS_MS: u64 = 400;
 const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
-const STD_DEV: f64 = 3000.0;
+const STD_DEV: f64 = 8000.0;
 
 /// unused
 #[derive(Debug)]
@@ -99,6 +99,7 @@ struct Weights {
 struct ReadInfo {
     read_id: String,
     read: Vec<i16>,
+    channel: usize,
     stop_receiving: bool,
     read_number: u32,
     start_coord: usize,
@@ -222,7 +223,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
         loop {
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
-                if read_infos.len() >= 1 {
+                if read_infos.len() >= 4000 {
                     let fast5_file_name = format!(
                         "{}_pass_{}_{}.fast5",
                         config.flowcell_name,
@@ -231,7 +232,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                     );
                     // drain 4000 reads and write them into a FAST5 file
                     let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
-                    for to_write_info in read_infos.drain(..1) {
+                    for to_write_info in read_infos.drain(..4000) {
                         // skip this read if we are trying to write it out twice
                         if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
                             continue;
@@ -242,8 +243,8 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                             let prev_time = to_write_info.start_time_utc;
                             let elapsed_time = unblock_time.time() - prev_time.time();
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
-                            info!("{:#?}", to_write_info);
-                            info!("WE ARE WRITING OUT AN UNBLOCKED READ {} AND THE LENGTH IS FROM 0 to {}", to_write_info.read_id, stop);
+                            // info!("{:#?}", to_write_info);
+                            // info!("WE ARE WRITING OUT AN UNBLOCKED READ {} AND THE LENGTH IS FROM 0 to {}", to_write_info.read_id, stop);
                             new_end = min(stop, to_write_info.read.len());              
                         }
                         let signal = to_write_info.read[0..new_end].to_vec();
@@ -420,7 +421,7 @@ fn unblock_reads(
             return (None, 0, 0);
         }
         if read_num != value.read_number {
-            info!("Ignoring unblcok for old read");
+            info!("Ignoring unblock for old read");
             return (None, 0, 0);
         }
         // if we are dealing with a new read, set the new read num as the last dealt with read num ath this channel number
@@ -528,6 +529,7 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             read_id: Uuid::nil().to_string(),
             // potench use with capacity?
             read: vec![],
+            channel: channel_number,
             stop_receiving: false,
             read_number: 0,
             start_coord: 0,
@@ -661,7 +663,7 @@ impl DataServiceServicer {
                     let read_estimated_finish_time = value.start_time_seconds as usize + value.duration;
                     // experiment_time is the time the experimanet has started until now
                     let experiment_time = Utc::now().timestamp() as u64 - start_time;
-                    info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
+                    // info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
                     if experiment_time as usize > read_estimated_finish_time || value.was_unblocked {
                         if value.write_out {
                             complete_read_tx.send(value.clone()).unwrap();
@@ -728,14 +730,14 @@ impl DataService for DataServiceServicer {
         // let is_setup = self.setup.lock().unwrap().clone();
 
         let output = async_stream::try_stream! {
-            let (tx2, mut rx2) = tokio::sync::mpsc::channel(200);
+            let (tx2, mut rx2) = tokio::sync::mpsc::channel(1);
             tokio::spawn(async move {
                 while let Some(live_reads_request) = stream.next().await {
                     let now2 = Instant::now();
     
-                    info!("Received get live read request at {:#?}", Utc::now());
-                    info!("{:#?}", live_reads_request);
-                    info!("Request loop number is {}", stream_counter);
+                    // info!("Received get live read request at {:#?}", Utc::now());
+                    // info!("{:#?}", live_reads_request);
+                    // info!("Request loop number is {}", stream_counter);
                     let live_reads_request = live_reads_request.unwrap();
                     tx.send(live_reads_request).unwrap();
                     stream_counter += 1
@@ -745,7 +747,7 @@ impl DataService for DataServiceServicer {
                 loop{
                     let now2 = Instant::now();
 
-                    let mut container: Vec<ReadData> = Vec::with_capacity(3000);
+                    let mut container: Vec<(usize, ReadData)> = Vec::with_capacity(3000);
                     let size = channel_size as f64 / 24_f64;
                     let size = size.ceil() as usize;
                     let mut channel: u32 = 1;
@@ -788,7 +790,7 @@ impl DataService for DataServiceServicer {
                                 // info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
                                 read_info.prev_chunk_start = stop;
                                 let read_chunk = read_info.read[start..stop].to_vec();
-                                container.push(ReadData{
+                                container.push((read_info.channel, ReadData{
                                         id: read_info.read_id.clone(),
                                         number: read_info.read_number.clone(),
                                         start_sample: 0,
@@ -798,8 +800,7 @@ impl DataService for DataServiceServicer {
                                         raw_data: convert_to_u8(read_chunk),
                                         median_before: 225.0,
                                         median: 110.0,
-        
-                                });
+                                }));
                                 
                             }
                         }
@@ -815,9 +816,8 @@ impl DataService for DataServiceServicer {
         
                     let mut channel_data = HashMap::with_capacity(24);
                     for chunk in container.chunks(24) {
-                        for read_data in chunk {
-                            channel_data.insert(channel, read_data.clone());
-                            channel += 1;
+                        for (channel,read_data) in chunk {
+                            channel_data.insert(channel.clone() as u32, read_data.clone());
                         }
                         tx2.send(GetLiveReadsResponse{
                             samples_since_start: 0,
@@ -828,10 +828,10 @@ impl DataService for DataServiceServicer {
                         channel_data.clear();
                     }
                     container.clear();
-                    info!("replying {:#?}", now2.elapsed().as_millis());
+                    // info!("replying {:#?}", now2.elapsed().as_millis());
                     thread::sleep(Duration::from_millis(200));
                 }
-            
+          // thread::sleep(Duration::from_millis(1000));  
           });
           while let Some(message) = rx2.recv().await {
             yield message
