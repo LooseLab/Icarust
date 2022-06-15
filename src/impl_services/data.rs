@@ -67,12 +67,12 @@ struct RunSetup {
 
 impl RunSetup {
     pub fn new() -> RunSetup {
-        return RunSetup {
+        RunSetup {
             setup: false,
             first: 0,
             last: 0,
             dtype: 0,
-        };
+        }
     }
 }
 
@@ -105,7 +105,6 @@ struct ReadInfo {
     start_coord: usize,
     stop_coord: usize,
     was_unblocked: bool,
-    unblock_stop_coord: usize,
     file_name: String,
     write_out: bool,
     start_time: u64,
@@ -148,14 +147,8 @@ impl fmt::Debug for ReadInfo {
     }
 }
 
-/// Add on between 0.7 and 1.5 of a chunk onto unblocked reads
-fn extend_unblocked_reads(normal: Normal<f64>, end: usize) -> usize {
-    let addition = normal.sample(&mut rand::thread_rng()) * 1600_f64;
-    let addition = addition.floor() as usize;
-    end + addition
-}
 
-/// Convert our i16 signal to bytes to be transferred to the read until API
+/// Convert our vec of i16 signal to a vec of bytes to be transferred to the read until API
 fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
     let mut dst: Vec<u8> = vec![0; raw_data.len() * 2];
     LittleEndian::write_i16_into(&raw_data, &mut dst);
@@ -347,10 +340,9 @@ fn start_unblock_thread(
 /// effect on the run itself, but could be implemented to do so in the future if required.
 fn setup(setuppy: get_live_reads_request::Request) -> (usize, usize, usize) {
     info!("Received stream setup, setting up.");
-    match setuppy {
-        get_live_reads_request::Request::Setup(h) => {}
-        _ => {} // ignore everything else
-    };
+    if let get_live_reads_request::Request::Setup(_h) = setuppy {
+
+    }
     // return we have prcessed 1 action
     (1, 0, 0)
 }
@@ -544,7 +536,6 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             start_coord: 0,
             stop_coord: 0,
             was_unblocked: false,
-            unblock_stop_coord: 0,
             file_name: "".to_string(),
             write_out: false,
             start_time: 0,
@@ -695,10 +686,8 @@ impl DataServiceServicer {
                                 &start_time,
                             )
                         }
-                    } else {
-                        if value.read.len() > 0 && !value.was_unblocked {
+                    } else if value.read.len() > 0 && !value.was_unblocked {
                             reads_incremented += 1;
-                        }
                     }
                 }
                 // info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
