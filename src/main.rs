@@ -17,7 +17,7 @@ extern crate log;
 mod services;
 use serde::Deserialize;
 use std::fs;
-use toml;
+
 use tonic::transport::Server;
 use uuid::Uuid;
 
@@ -58,7 +58,7 @@ fn _load_toml(file_path: &str) -> Config {
     let contents =
         fs::read_to_string(file_path).expect("Something went wrong with reading the file.");
     let config: Config = toml::from_str(&contents).unwrap();
-    return config;
+    config
 }
 
 /// Main function - Runs two asynchronous GRPC servers
@@ -72,7 +72,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr_manager = "127.0.0.1:10000".parse().unwrap();
     let addr_position = "127.0.0.1:10001".parse().unwrap();
-    let run_id = Uuid::new_v4().to_string().replace("-", "");
+    let run_id = Uuid::new_v4().to_string().replace('-', "");
 
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
