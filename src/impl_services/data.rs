@@ -14,6 +14,7 @@
 use futures::{Stream, StreamExt};
 use std::cmp::{self, min};
 use std::collections::HashMap;
+use std::fmt;
 use std::fs::File;
 use std::mem;
 use std::path::Path;
@@ -23,7 +24,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use std::time::Instant;
 use std::{thread, u8};
-use std::fmt;
 
 use byteorder::{ByteOrder, LittleEndian};
 use chrono::prelude::*;
@@ -117,12 +117,14 @@ struct ReadInfo {
     prev_chunk_start: usize,
     duration: usize,
     time_accessed: DateTime<Utc>,
-    time_unblocked: DateTime<Utc>
+    time_unblocked: DateTime<Utc>,
 }
 
 impl fmt::Debug for ReadInfo {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "{{\n
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{{\n
         Read Id: {}
         Stop receiving: {}
         Data len: {}
@@ -132,9 +134,19 @@ impl fmt::Debug for ReadInfo {
         Time Started: {}
         Time Accessed: {}
         Prev Chunk End: {}
-        }}", self.read_id, self.stop_receiving, self.read.len(), self.read_number, self.was_unblocked, self.duration, self.start_time_utc, self.time_accessed, self.prev_chunk_start)
-  }
-}  
+        }}",
+            self.read_id,
+            self.stop_receiving,
+            self.read.len(),
+            self.read_number,
+            self.was_unblocked,
+            self.duration,
+            self.start_time_utc,
+            self.time_accessed,
+            self.prev_chunk_start
+        )
+    }
+}
 
 /// Add on between 0.7 and 1.5 of a chunk onto unblocked reads
 fn extend_unblocked_reads(normal: Normal<f64>, end: usize) -> usize {
@@ -243,9 +255,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                             let prev_time = to_write_info.start_time_utc;
                             let elapsed_time = unblock_time.time() - prev_time.time();
                             let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
-                            // info!("{:#?}", to_write_info);
-                            // info!("WE ARE WRITING OUT AN UNBLOCKED READ {} AND THE LENGTH IS FROM 0 to {}", to_write_info.read_id, stop);
-                            new_end = min(stop, to_write_info.read.len());              
+                            new_end = min(stop, to_write_info.read.len());
                         }
                         let signal = to_write_info.read[0..new_end].to_vec();
                         let raw_attrs = HashMap::from([
@@ -297,7 +307,10 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
     complete_read_tx
 }
 
-fn start_unblock_thread(channel_read_info: Arc<Mutex<Vec<ReadInfo>>>, complete_read_tx: SyncSender<ReadInfo>) -> SyncSender<GetLiveReadsRequest> {
+fn start_unblock_thread(
+    channel_read_info: Arc<Mutex<Vec<ReadInfo>>>,
+    complete_read_tx: SyncSender<ReadInfo>,
+) -> SyncSender<GetLiveReadsRequest> {
     let (tx, rx): (
         SyncSender<GetLiveReadsRequest>,
         Receiver<GetLiveReadsRequest>,
@@ -312,19 +325,18 @@ fn start_unblock_thread(channel_read_info: Arc<Mutex<Vec<ReadInfo>>>, complete_r
             // match whether we have actions or a setup
             let (setup_proc, unblock_proc, stop_rec_proc) = match request_type {
                 // set up request
-                get_live_reads_request::Request::Setup(_) => {
-                    setup(request_type)
-                }
+                get_live_reads_request::Request::Setup(_) => setup(request_type),
                 // list of actions
-                get_live_reads_request::Request::Actions(_) => take_actions(
-                    request_type,
-                    &channel_read_info,
-                    &mut read_numbers_actioned,
-                ),
+                get_live_reads_request::Request::Actions(_) => {
+                    take_actions(request_type, &channel_read_info, &mut read_numbers_actioned)
+                }
             };
             total_unblocks += unblock_proc;
             total_sr += stop_rec_proc;
-            info!("Unblocked: {}, Stop receiving: {}, Total unblocks {}, total sr {}", unblock_proc, stop_rec_proc, total_unblocks, total_sr);
+            info!(
+                "Unblocked: {}, Stop receiving: {}, Total unblocks {}, total sr {}",
+                unblock_proc, stop_rec_proc, total_unblocks, total_sr
+            );
         }
     });
 
@@ -333,15 +345,10 @@ fn start_unblock_thread(channel_read_info: Arc<Mutex<Vec<ReadInfo>>>, complete_r
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no
 /// effect on the run itself, but could be implemented to do so in the future if required.
-fn setup(
-    setuppy: get_live_reads_request::Request,
-
-) -> (usize, usize, usize) {
+fn setup(setuppy: get_live_reads_request::Request) -> (usize, usize, usize) {
     info!("Received stream setup, setting up.");
     match setuppy {
-        get_live_reads_request::Request::Setup(h) => {
-
-        }
+        get_live_reads_request::Request::Setup(h) => {}
         _ => {} // ignore everything else
     };
     // return we have prcessed 1 action
@@ -379,14 +386,18 @@ fn take_actions(
                         action.read.unwrap(),
                         read_numbers_actioned,
                         read_infos.get_mut(zero_index_channel).expect(
-                            format!("failed to unblock on channel {}", action.channel).as_str()
+                            format!("failed to unblock on channel {}", action.channel).as_str(),
                         ),
                     ),
-                    action::Action::StopFurtherData(stop) => {
-                        stop_sending_read(stop, action.action_id, zero_index_channel, read_infos.get_mut(zero_index_channel).expect(
-                            format!("failed to stop receiving on channel {}", action.channel).as_str()
-                        ))
-                    }
+                    action::Action::StopFurtherData(stop) => stop_sending_read(
+                        stop,
+                        action.action_id,
+                        zero_index_channel,
+                        read_infos.get_mut(zero_index_channel).expect(
+                            format!("failed to stop receiving on channel {}", action.channel)
+                                .as_str(),
+                        ),
+                    ),
                 };
                 // add_response.push(action_response);
                 unblocks_processed += unblock_count;
@@ -503,14 +514,12 @@ fn read_views_of_data(
     views
 }
 
-
 /// Convert an elapased period of time in milliseconds tinto samples
-/// 
-/// 
+///
+///
 fn convert_seconds_to_samples(milliseconds: i64) -> usize {
     (milliseconds * 4) as usize
 }
-
 
 ///
 /// Create and return a Vec that stores the internal data generate thread state to be shared bewteen the server and the threads.
@@ -547,11 +556,10 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             prev_chunk_start: 0,
             duration: 0,
             time_accessed: Utc::now(),
-            time_unblocked: Utc::now()
+            time_unblocked: Utc::now(),
         };
         num.push(read_info);
     }
-
 }
 
 /// Generate an inital read, which is stored as a ReadInfo in the channel_read_info vec. This is mutated in place.
@@ -597,12 +605,11 @@ fn generate_read(
     value.stop_coord = end;
     let read_id = Uuid::new_v4().to_string();
     value.read_id = read_id;
-    // reset these time based metrics 
+    // reset these time based metrics
     value.time_accessed = Utc::now();
     // prev chunk start has to be zero as there are now no previous chunks on anew read
     value.prev_chunk_start = 0;
 }
-
 
 impl DataServiceServicer {
     pub fn new(size: usize, run_id: String) -> DataServiceServicer {
@@ -643,7 +650,6 @@ impl DataServiceServicer {
             // normal distribution is great news for smooth read length graphs in minoTour
             let normal: Normal<f64> = Normal::new(MEAN_READ_LEN, STD_DEV).unwrap();
 
-
             loop {
                 debug!("Sequencer mock loop start");
 
@@ -660,11 +666,13 @@ impl DataServiceServicer {
 
                 for i in 0..channel_size {
                     let value = num.get_mut(i).unwrap();
-                    let read_estimated_finish_time = value.start_time_seconds as usize + value.duration;
+                    let read_estimated_finish_time =
+                        value.start_time_seconds as usize + value.duration;
                     // experiment_time is the time the experimanet has started until now
                     let experiment_time = Utc::now().timestamp() as u64 - start_time;
                     // info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
-                    if experiment_time as usize > read_estimated_finish_time || value.was_unblocked {
+                    if experiment_time as usize > read_estimated_finish_time || value.was_unblocked
+                    {
                         if value.write_out {
                             complete_read_tx.send(value.clone()).unwrap();
                         }
@@ -687,9 +695,8 @@ impl DataServiceServicer {
                                 &start_time,
                             )
                         }
-                    }
-                    else {
-                        if value.read.len() > 0 && !value.was_unblocked{
+                    } else {
+                        if value.read.len() > 0 && !value.was_unblocked {
                             reads_incremented += 1;
                         }
                     }
@@ -721,7 +728,7 @@ impl DataService for DataServiceServicer {
     ) -> Result<Response<Self::get_live_readsStream>, Status> {
         let mut stream = _request.into_inner();
         let data_lock = Arc::clone(&self.read_data);
-        let data_lock_unblock =  Arc::clone(&self.read_data);
+        let data_lock_unblock = Arc::clone(&self.read_data);
         let complete_read_tx = self.complete_read_tx.clone();
         let tx = start_unblock_thread(data_lock_unblock, complete_read_tx);
         let channel_size = get_channel_size();
@@ -734,10 +741,6 @@ impl DataService for DataServiceServicer {
             tokio::spawn(async move {
                 while let Some(live_reads_request) = stream.next().await {
                     let now2 = Instant::now();
-    
-                    // info!("Received get live read request at {:#?}", Utc::now());
-                    // info!("{:#?}", live_reads_request);
-                    // info!("Request loop number is {}", stream_counter);
                     let live_reads_request = live_reads_request.unwrap();
                     tx.send(live_reads_request).unwrap();
                     stream_counter += 1
@@ -801,7 +804,7 @@ impl DataService for DataServiceServicer {
                                         median_before: 225.0,
                                         median: 110.0,
                                 }));
-                                
+
                             }
                         }
                         mem::drop(z2);
@@ -810,10 +813,10 @@ impl DataService for DataServiceServicer {
                             info!("Breaking out");
                             loop_for_data = false;
                         }
-                        
+
                         // reset channel so we don't over total number of channels whilst spinning for data
                     }
-        
+
                     let mut channel_data = HashMap::with_capacity(24);
                     for chunk in container.chunks(24) {
                         for (channel,read_data) in chunk {
@@ -831,11 +834,11 @@ impl DataService for DataServiceServicer {
                     // info!("replying {:#?}", now2.elapsed().as_millis());
                     thread::sleep(Duration::from_millis(200));
                 }
-          // thread::sleep(Duration::from_millis(1000));  
-          });
-          while let Some(message) = rx2.recv().await {
-            yield message
-        }
+
+            });
+            while let Some(message) = rx2.recv().await {
+                yield message
+            }
 
         };
         info!("End of stream");
