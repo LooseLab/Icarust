@@ -1,0 +1,19 @@
+output_path = "/tmp/"
+
+[parameters]
+sample_name = "test"
+experiment_name = "test_2_bacteria"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "FenceSitter"
+
+[[sample]]
+input_genome = "NC_002516.2.squiggle.npy"
+mean_read_length = 20000
+weight = 1
+
+[[sample]]
+input_genome = "NC_003997.3.squiggle.npy"
+mean_read_length = 15000
+weight = 2
