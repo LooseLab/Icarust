@@ -494,7 +494,7 @@ fn read_views_of_data(
             ArrayView1::<i16>::view_npy(&mmap).unwrap();
         let size = view.shape()[0];
         let file_name: String = sample_info.input_genome.file_name().unwrap().to_os_string().into_string().unwrap();
-        let read_gamma = sample_info.get_read_len_dist(files.global_mean_read_length.unwrap());
+        let read_gamma = sample_info.get_read_len_dist(files.global_mean_read_length);
         views.insert(file_name.clone(), (size, view.to_owned(), read_gamma));
     }
     views
