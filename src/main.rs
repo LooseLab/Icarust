@@ -128,10 +128,10 @@ impl Sample {
     pub fn get_read_len_dist(&self, global_read_len: Option<f64>) -> Gamma<f64> {
         match self.mean_read_length {
             Some(mrl) => {
-                Gamma::new(mrl,1.0).unwrap()
+                Gamma::new(mrl / 450.0 * 4000.0,1.0).unwrap()
             },
             None => {
-                Gamma::new(global_read_len.unwrap(), 1.0).unwrap()
+                Gamma::new(global_read_len.unwrap() / 450.0 * 4000.0, 1.0).unwrap()
             }
         }
     }
