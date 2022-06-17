@@ -4,20 +4,27 @@
 //! # Icarust
 //!
 //! A binary for running a mock, read-fish compatible grpc server to test live unblocking read-until experiments.
+//! 
+//! The details for configuring the run can be found in Profile_tomls.
 //!
-//! Simply `cargo run` in the directory to start the server, which hosts the Manager Server on 127.0.0.1:10000
+//! Simply `cargo run --config <config.toml>` in the directory to start the server, which hosts the Manager Server on 127.0.0.1:10000
 //!
 //! Has one position, which is hosted on 127.0.0.1:10001
-//!  
+//! 
 mod impl_services;
+/// The module pertaining the CLI code
+pub mod cli;
 #[macro_use]
 extern crate log;
 
 /// Import all our definied services
 mod services;
-use serde::Deserialize;
+
 use std::fs;
 
+use clap::Parser;
+use rand_distr::Gamma;
+use serde::Deserialize;
 use tonic::transport::Server;
 use uuid::Uuid;
 
@@ -43,23 +50,102 @@ use crate::services::minknow_api::manager::manager_service_server::ManagerServic
 use crate::services::minknow_api::manager::FlowCellPosition;
 use crate::services::minknow_api::protocol::protocol_service_server::ProtocolServiceServer;
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize, Debug, Clone)]
 struct Config {
+    parameters: Parameters,
+    sample: Vec<Sample>,
+    output_path: std::path::PathBuf,
+    global_mean_read_length: Option<f64>
+}
+
+impl Config {
+    /// Check if a global mean read length has been set
+    pub fn has_global_length (&self) -> bool {
+        let has_len = match self.global_mean_read_length{ 
+            Some(_) =>  {
+                true
+            }
+            None => {
+                false
+            } 
+        };
+        has_len
+    }
+    /// Get the usize version of the run duration so we can stop running if we exceed it. 
+    /// If not set a default value of 4800 is returned
+    pub fn get_experiment_duration_set (&self) -> usize {
+        let duration = match self.parameters.experiment_duration_set{ 
+            Some(duration) =>  {
+                duration
+            }
+            None => {
+                // wasn't set so default 4800
+                4800
+            } 
+        };
+        duration
+    }
+
+    pub fn check_fields (&self) {
+        for sample in &self.sample {
+            match sample.mean_read_length {
+                Some(_) => {
+                    continue
+                }, 
+                None => {
+                    match self.global_mean_read_length {
+                        Some(_) => {
+                            continue
+                        },
+                        None => {
+                            panic!("Sample {} does not have a mean read length and no global read length is set.", sample.input_genome.display());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct Parameters {
     sample_name: String,
     experiment_name: String,
     flowcell_name: String,
-    experiment_duration_set: String,
+    experiment_duration_set: Option<usize>,
     device_id: String,
-    position: String,
+    position: String
 }
 
+#[derive(Deserialize, Debug, Clone)]
+struct Sample {
+    input_genome: std::path::PathBuf,
+    mean_read_length: Option<f64>,
+    weight: usize
+}
+
+impl Sample {
+    pub fn get_read_len_dist(&self, global_read_len: f64) -> Gamma<f64> {
+        match self.mean_read_length {
+            Some(mrl) => {
+                Gamma::new(mrl,1.0).unwrap()
+            },
+            None => {
+                Gamma::new(global_read_len, 1.0).unwrap()
+            }
+        }
+    }
+}
+
+
 /// Loads our config TOML to get the sample name, experiment name and flowcell name, which is returned as a Config struct.
-fn _load_toml(file_path: &str) -> Config {
+fn _load_toml(file_path: &std::path::PathBuf) -> Config {
     let contents =
-        fs::read_to_string(file_path).expect("Something went wrong with reading the file.");
+        fs::read_to_string(file_path).expect("Something went wrong with reading the config file -");
     let config: Config = toml::from_str(&contents).unwrap();
     config
 }
+
 
 /// Main function - Runs two asynchronous GRPC servers
 /// The first server is the manager server, which here manages available sequencing positions and minknow version information.
@@ -67,8 +153,13 @@ fn _load_toml(file_path: &str) -> Config {
 /// sequencing position.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config = _load_toml("config.toml");
-    println!("{:#?}", config);
+
+    let args = cli::Cli::parse();
+    args.set_logging();
+    args.check_config_exists();
+    let config = _load_toml(&args.config);
+    config.check_fields();
+    info!("{:#?}", config);
 
     let addr_manager = "127.0.0.1:10000".parse().unwrap();
     let addr_position = "127.0.0.1:10001".parse().unwrap();
@@ -76,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
-            name: config.device_id,
+            name: config.parameters.device_id,
             state: 1,
             rpc_ports: Some(RpcPorts {
                 secure: 8000,
@@ -108,7 +199,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let devi_svc = DeviceServiceServer::new(Device {});
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {});
     let protocol_svc = ProtocolServiceServer::new(Protocol {});
-    let data_svc = DataServiceServer::new(DataServiceServicer::new(3000, run_id));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(3000, run_id, args));
 
     Server::builder()
         .add_service(log_svc)
