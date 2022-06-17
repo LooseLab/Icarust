@@ -21,7 +21,7 @@ rand = "0.8"
 rand_distr = "0.4"
 fnv = "1.0"
 log = "0.4.0"
-env_logger = "0.9.0"
+pretty_env_logger = "0.4.0"
 uuid = { version = "0.8", features = ["v4"]}
 ndarray-npy = { version = "0.8.1", default-features = false }
 ndarray = "0.15.0"
@@ -29,6 +29,8 @@ memmap2 = "0.5.3"
 rm-frust5-api = "0.0.3"
 chrono = "0.4"
 byteorder = "1"
+clap = { version = "3.2.5", features = ["derive"] }
+
 
 [build-dependencies]
 tonic-build = "0.6"
