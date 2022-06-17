@@ -1,3 +1,5 @@
+#![deny(missing_docs)]
+#![deny(missing_doc_code_examples)]
 //! This module contains all the code to create a new DataServiceServicer, which spawns a data generation thread that acts an approximation of a sequencer.
 //! It has a few issues, but should serve it's purpose. Basically the bread and butter of this server implementation, should be readfish compatibile.
 //!
@@ -17,7 +19,6 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs::File;
 use std::mem;
-use std::path::Path;
 use std::pin::Pin;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -27,7 +28,6 @@ use std::{thread, u8};
 
 use byteorder::{ByteOrder, LittleEndian};
 use chrono::prelude::*;
-use env_logger::Env;
 use fnv::FnvHashSet;
 use frust5_api::*;
 use memmap2::Mmap;
@@ -35,12 +35,13 @@ use ndarray::{s, ArrayBase, ArrayView1, Dim, ViewRepr};
 use ndarray_npy::ViewNpyExt;
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
-use rand_distr::{Distribution, Normal};
+use rand_distr::{Distribution, Gamma};
 use serde::Deserialize;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-use crate::_load_toml;
+use crate::{_load_toml, Config};
+use crate::cli::Cli;
 use crate::services::minknow_api::data::data_service_server::DataService;
 use crate::services::minknow_api::data::get_data_types_response::DataType;
 use crate::services::minknow_api::data::get_live_reads_request::action;
@@ -51,10 +52,10 @@ use crate::services::minknow_api::data::{
 };
 use crate::services::setup_conf::get_channel_size;
 
-const CHUNK_SIZE_1S: usize = 4000;
-const BREAK_READS_MS: u64 = 400;
-const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
-const STD_DEV: f64 = 8000.0;
+// const CHUNK_SIZE_1S: usize = 4000;
+// const BREAK_READS_MS: u64 = 400;
+// const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
+// const STD_DEV: f64 = 8000.0;
 
 /// unused
 #[derive(Debug)]
@@ -156,19 +157,20 @@ fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
 }
 
 /// Start the thread that will handle writing out the FAST5 file,
-fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
+fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
+    let x = config.clone();
     thread::spawn(move || {
         let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
-        let config = _load_toml("config.toml");
+        let config = _load_toml(&x.config);
+        let experiment_duration =  config.get_experiment_duration_set().to_string();
         // std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
         let context_tags = HashMap::from([
             ("barcoding_enabled", "0"),
             (
-                "experiment_duration_set",
-                config.experiment_duration_set.as_str(),
+                "experiment_duration_set", experiment_duration.as_str()
             ),
             ("experiment_type", "genomic_dna"),
             ("local_basecalling", "0"),
@@ -190,7 +192,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
             ("bream_is_standard", "0"),
             ("configuration_version", "4.4.13"),
             ("device_id", "Bantersaurus"),
-            ("device_type", config.position.as_str()),
+            ("device_type", config.parameters.position.as_str()),
             ("distribution_status", "stable"),
             ("distribution_version", "21.10.8"),
             (
@@ -199,7 +201,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
             ),
             ("exp_script_purpose", "sequencing_run"),
             ("exp_start_time", iso_time.as_str()),
-            ("flow_cell_id", config.flowcell_name.as_str()),
+            ("flow_cell_id", config.parameters.flowcell_name.as_str()),
             ("flow_cell_product_code", "FLO-MIN106"),
             ("guppy_version", "5.0.17+99baa5b"),
             ("heatsink_temp", "34.066406"),
@@ -209,27 +211,27 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
             ("installation_type", "nc"),
             ("local_firmware_file", "1"),
             ("operating_system", "ubuntu 16.04"),
-            ("protocol_group_id", config.experiment_name.as_str()),
+            ("protocol_group_id", config.parameters.experiment_name.as_str()),
             ("protocol_run_id", "SYNTHETIC_RUN"),
             ("protocol_start_time", iso_time.as_str()),
             ("protocols_version", "6.3.5"),
             ("run_id", run_id.as_str()),
-            ("sample_id", config.sample_name.as_str()),
+            ("sample_id", config.parameters.sample_name.as_str()),
             ("usb_config", "fx3_1.2.4#fpga_1.2.1#bulk#USB300"),
             ("version", "4.4.3"),
         ]);
         let mut read_numbers_seen: FnvHashSet<String> =
             FnvHashSet::with_capacity_and_hasher(4000, Default::default());
-        let files = ["NC_002516.2.squiggle.npy", "NC_003997.3.squiggle.npy"];
         let mut file_counter = 0;
         // loop to collect reads and write out files
         loop {
+            info!("Reads to write out len is {}", read_infos.len());
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
                 if read_infos.len() >= 4000 {
                     let fast5_file_name = format!(
                         "{}_pass_{}_{}.fast5",
-                        config.flowcell_name,
+                        config.parameters.flowcell_name,
                         &run_id[0..6],
                         file_counter
                     );
@@ -293,6 +295,7 @@ fn start_write_out_thread(run_id: String) -> SyncSender<ReadInfo> {
                     read_numbers_seen.clear();
                 }
             }
+            thread::sleep(Duration::from_secs(1));
         }
     });
     complete_read_tx
@@ -464,37 +467,35 @@ fn stop_sending_read(
     )
 }
 
-/// Read in the species distribution JSON, which gives us the odds of a species genome being chosen in a multi species sample.
+/// Read in the sample info from the config.toml, which gives us the odds of a species genome being chosen in a multi species sample.
 ///
-/// The distribution file is pre calculated by the included python script make_squiggle.py. This script uses the lengths of the specified genomes
-/// to calculate the likelihood of a genome being sequenced in a library that has the same amount of cells uses in the preperation.
 /// This file can be manually created to alter library balances.
-fn read_species_distribution(json_file_path: &Path) -> WeightedIndex<usize> {
-    let file =
-        File::open(json_file_path).expect("Distribution JSON file not found, please see README.");
-    let w: Weights =
-        serde_json::from_reader(file).expect("Error whilst reading distribution file.");
-    let weights = w.weights;
-    let names = w.names;
-    info!("Read in weights for species {:#?}", names);
-    
+fn read_species_distribution(config: &Config) -> WeightedIndex<usize> {
+    let mut weights: Vec<usize> = Vec::with_capacity(config.sample.len());
+    for sample in config.sample.iter() {
+        weights.push(sample.weight.clone());
+    }
     WeightedIndex::new(&weights).unwrap()
 }
 
 /// Creates Memory mapped views of the precalculated numpy arrays of squiggle for reference genomes, generated by make_squiggle.py
 ///
 /// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
+/// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw 
 fn read_views_of_data(
-    files: [&str; 2],
-) -> HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>)> {
+    files: Config,
+) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>)> {
     let mut views = HashMap::new();
-    for file_path in files {
-        let file = File::open(file_path).unwrap();
+    for sample_info in files.sample {
+        info!("Reading information for {:#?}", sample_info.input_genome.file_name());        
+        let file = File::open(&sample_info.input_genome).unwrap();
         let mmap = unsafe { Mmap::map(&file).unwrap() };
         let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
             ArrayView1::<i16>::view_npy(&mmap).unwrap();
         let size = view.shape()[0];
-        views.insert(file_path, (size, view.to_owned()));
+        let file_name: String = sample_info.input_genome.file_name().unwrap().to_os_string().into_string().unwrap();
+        let read_gamma = sample_info.get_read_len_dist(files.global_mean_read_length.unwrap());
+        views.insert(file_name.clone(), (size, view.to_owned(), read_gamma));
     }
     views
 }
@@ -548,11 +549,10 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
 
 /// Generate an inital read, which is stored as a ReadInfo in the channel_read_info vec. This is mutated in place.
 fn generate_read(
-    files: [&str; 2],
+    files: &Vec<String>,
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
-    views: &HashMap<&str, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>)>,
-    normal: Normal<f64>,
+    views: &HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>)>,
     rng: &mut ThreadRng,
     read_number: &mut u32,
     start_time: &u64,
@@ -570,11 +570,13 @@ fn generate_read(
     value.start_time_seconds = (Utc::now().timestamp() as u64 - start_time) as usize;
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
-    let file_choice: &str = files[dist.sample(rng)];
+    let file_choice: &String = &files[dist.sample(rng)];
     let file_info = &views[file_choice];
     // start point in file
     let start: usize = rng.gen_range(0..file_info.0 - 1000) as usize;
-    let read_length: usize = normal.sample(&mut rand::thread_rng()) as usize;
+    // Get our distribution from either the Sample specified Gamma or the global read length
+    let read_distribution = file_info.2;
+    let read_length: usize = read_distribution.sample(&mut rand::thread_rng()) as usize;
     // don;t over slice our read
     let end: usize = cmp::min(start + read_length, file_info.0 - 1);
     // slice the view to get our full read
@@ -596,14 +598,13 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn new(size: usize, run_id: String) -> DataServiceServicer {
+    pub fn new(size: usize, run_id: String, cli_opts: Cli) -> DataServiceServicer {
         assert!(size > 0);
         let now = Instant::now();
-        let json_file_path = Path::new("distributions.json");
-        let files = ["NC_002516.2.squiggle.npy", "NC_003997.3.squiggle.npy"];
-        let _chunk_size = CHUNK_SIZE_1S as f64 * (BREAK_READS_MS as f64 / 1000.0);
+        let config = _load_toml(&cli_opts.config);
         let channel_size = get_channel_size();
         let start_time: u64 = Utc::now().timestamp() as u64;
+
         let safe: Arc<Mutex<Vec<ReadInfo>>> =
             Arc::new(Mutex::new(Vec::with_capacity(channel_size)));
         let action_response_safe: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>> =
@@ -612,15 +613,11 @@ impl DataServiceServicer {
         let thread_safe = Arc::clone(&safe);
         let is_setup = Arc::new(Mutex::new(false));
         let is_safe_setup = Arc::clone(&is_setup);
-
-        let env = Env::default()
-            .filter_or("MY_LOG_LEVEL", "info")
-            .write_style_or("MY_LOG_STYLE", "always");
-        env_logger::init_from_env(env);
-        let dist = read_species_distribution(json_file_path);
-        let views = read_views_of_data(files);
-
-        let complete_read_tx = start_write_out_thread(run_id);
+        
+        let dist = read_species_distribution(&config);
+        let views = read_views_of_data(config.clone());
+        let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
+        let complete_read_tx = start_write_out_thread(run_id, cli_opts);
         let complete_read_tx_2 = complete_read_tx.clone();
 
         // start the thread to generate data
@@ -631,8 +628,8 @@ impl DataServiceServicer {
             let mut read_number: u32 = 0;
             setup_channel_vec(channel_size, &thread_safe);
 
-            // normal distribution is great news for smooth read length graphs in minoTour
-            let normal: Normal<f64> = Normal::new(MEAN_READ_LEN, STD_DEV).unwrap();
+            // If we have a global mean read_length set up a gamma distribution for it
+
 
             loop {
                 debug!("Sequencer mock loop start");
@@ -669,11 +666,10 @@ impl DataServiceServicer {
                             read_number += 1;
                             reads_generated += 1;
                             generate_read(
-                                files,
+                                &files,
                                 value,
                                 &dist,
                                 &views,
-                                normal,
                                 &mut rng,
                                 &mut read_number,
                                 &start_time,
