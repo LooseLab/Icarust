@@ -40,3 +40,10 @@ def collapse_amplicon_start_ends(scheme_bed_file: Path) -> NDArray:
         )
     )
     return amplicon_coords
+
+
+def create_dir(dir_path: Path):
+    """
+    Create a directory if it doesn't already exist
+    """
+    dir_path.mkdir(exist_ok=False, parents=True)

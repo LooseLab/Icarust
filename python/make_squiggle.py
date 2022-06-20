@@ -18,7 +18,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TaskID
 from rich.table import Table
 
-from utils import collapse_amplicon_start_ends
+from utils import collapse_amplicon_start_ends, create_dir
 
 logger = logging.getLogger(__name__)
 logger.addHandler(RichHandler())
@@ -84,7 +84,7 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
     -------
 
     """
-    json_file_path = Path(f"../distributions.json")
+    json_file_path = out_dir / "distributions.json"
     assert path.exists(), "Can't FinD THiS FilE"
     seq_lens = []
     total_contigs = sum((1 for name, seq, qual in mp.fastx_read(str(path.resolve()))))
@@ -96,10 +96,12 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
             coords = collapse_amplicon_start_ends(bed_file)
             job_progress.update(task_lookup["amplicon_job"], total=len(coords))
             for amp_start, amp_stop, amp_name in coords:
+                amp_seq = seq[amp_start:amp_stop]
+                seq_lens.append((amp_name, len(amp_seq)))
                 logger.info(f"Amplicon {amp_name} spans reference from {amp_start}: {amp_stop}")
                 squiggle_path = out_dir / f"{name}_{amp_name}.squiggle.npy"
                 if not squiggle_path.exists():
-                    generate_squiggle(seq[amp_start:amp_stop], squiggle_path, job_progress, task_lookup)
+                    generate_squiggle(amp_seq, squiggle_path, job_progress, task_lookup)
                 job_progress.advance(task_lookup["amplicon_job"])
         else:
             squiggle_path = out_dir / f"{name}.squiggle.npy"
@@ -211,6 +213,7 @@ def generate_squiggle(seq: Str, squiggle_path: Path, job_progress: Progress, tas
         job_progress.advance(task_id)
     np.save(squiggle_path, arr=arr)
 
+
 def validate_args (args: argparse.Namespace) -> None:
     """
     Validate the provided args
@@ -228,6 +231,10 @@ def validate_args (args: argparse.Namespace) -> None:
     
     if args.bed_file and not args.bed_file.exists():
         raise FileNotFoundError(f"{args.bed_file} not found. Please double check provided path...")
+
+    if not args.out_dir.exists():
+        logger.warning(f"{args.out_dir} does not exist, attempting to create it")
+        create_dir(args.out_dir)
 
 
 if __name__ == "__main__":
