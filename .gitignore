@@ -5,3 +5,4 @@
 /test_basecall
 *.fast5
 basecall_test.py
+*LEFT*
