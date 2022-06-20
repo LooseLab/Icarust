@@ -125,7 +125,8 @@ struct Parameters {
 struct Sample {
     input_genome: std::path::PathBuf,
     mean_read_length: Option<f64>,
-    weight: usize
+    weight: Option<usize>,
+    weights_file: Option<std::path::PathBuf>
 }
 
 impl Sample {
