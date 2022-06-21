@@ -12,3 +12,4 @@ position = "FenceSitter"
 input_genome = "squiggle_arrs/monkeypox/"
 mean_read_length = 20000
 weights_file = "squiggle_arrs/monkeypox/distributions.json"
+amplicon = true

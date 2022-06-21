@@ -122,7 +122,8 @@ struct Sample {
     input_genome: std::path::PathBuf,
     mean_read_length: Option<f64>,
     weight: Option<usize>,
-    weights_file: Option<std::path::PathBuf>
+    weights_file: Option<std::path::PathBuf>,
+    amplicon: Option<bool>
 }
 
 impl Sample {
@@ -133,6 +134,16 @@ impl Sample {
             },
             None => {
                 Gamma::new(global_read_len.unwrap() / 450.0 * 4000.0, 1.0).unwrap()
+            }
+        }
+    }
+    pub fn is_amplicon(&self) -> bool{
+        match self.amplicon {
+            Some(the_truth) => {
+                the_truth
+            },
+            None => {
+                false
             }
         }
     }
