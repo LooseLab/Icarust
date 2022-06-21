@@ -502,8 +502,8 @@ fn read_species_distribution(config: &Config) -> WeightedIndex<usize> {
 /// Iterate the samples given as the input genome path listed in the config. If it is a directory - insert a view for each squiggle file in the directory. N.B This is used for amplicon based genomes.
 fn read_genome_dir_or_file (
     config: Config
-) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>)> {
-    let mut views: HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>)> = HashMap::new();
+) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)> {
+    let mut views: HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)> = HashMap::new();
     for sample_info in &config.sample {
         if sample_info.input_genome.is_dir() {
             for entry in sample_info.input_genome.read_dir().expect("read_dir call failed").into_iter() {
@@ -525,7 +525,7 @@ fn read_genome_dir_or_file (
 /// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
 /// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw 
 fn read_views_of_data(
-    views: &mut HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>)>,
+    views: &mut HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)>,
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample
@@ -538,7 +538,7 @@ fn read_views_of_data(
     let size = view.shape()[0];
     let file_name: String = file_info.file_name().unwrap().to_os_string().into_string().unwrap();
     let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
-    views.insert(file_name.clone(), (size, view.to_owned(), read_gamma));
+    views.insert(file_name.clone(), (size, view.to_owned(), read_gamma, sample_info.is_amplicon()));
 }
 
 /// Convert an elapased period of time in milliseconds tinto samples
@@ -593,7 +593,7 @@ fn generate_read(
     files: &Vec<String>,
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
-    views: &HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>)>,
+    views: &HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)>,
     rng: &mut ThreadRng,
     read_number: &mut u32,
     start_time: &u64,
@@ -614,7 +614,14 @@ fn generate_read(
     let file_choice: &String = &files[dist.sample(rng)];
     let file_info = &views[file_choice];
     // start point in file
-    let start: usize = rng.gen_range(0..file_info.0 - 1000) as usize;
+    let start: usize = match file_info.3 {
+        true => {
+            0
+        }, 
+        false => {
+            rng.gen_range(0..file_info.0 - 1000) as usize
+        }
+    };
     // Get our distribution from either the Sample specified Gamma or the global read length
     let read_distribution = file_info.2;
     let read_length: usize = read_distribution.sample(&mut rand::thread_rng()) as usize;
