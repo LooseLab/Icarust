@@ -17,8 +17,9 @@ use futures::{Stream, StreamExt};
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::File;
+use std::fs::{File, create_dir_all};
 use std::mem;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -51,11 +52,6 @@ use crate::services::minknow_api::data::{
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
 use crate::services::setup_conf::get_channel_size;
-
-// const CHUNK_SIZE_1S: usize = 4000;
-// const BREAK_READS_MS: u64 = 400;
-// const MEAN_READ_LEN: f64 = 20000.0 / 450.0 * 4000.0;
-// const STD_DEV: f64 = 8000.0;
 
 /// unused
 #[derive(Debug)]
@@ -156,6 +152,12 @@ fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
     dst
 }
 
+/// Create the output dir to write fast5 too, if it doesn't already exist
+fn create_ouput_dir(output_dir: &std::path::PathBuf) -> std::io::Result<()>{
+    create_dir_all(output_dir)?;
+    Ok(())
+}
+
 /// Start the thread that will handle writing out the FAST5 file,
 fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
@@ -223,13 +225,21 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
         let mut read_numbers_seen: FnvHashSet<String> =
             FnvHashSet::with_capacity_and_hasher(4000, Default::default());
         let mut file_counter = 0;
+        let output_dir = PathBuf::from(format!(
+            "{}/{}/{}/fast5/", config.output_path.display(),
+            config.parameters.experiment_name,
+            config.parameters.sample_name));
+        if !output_dir.exists() {
+            create_ouput_dir(&output_dir).unwrap();
+        }
         // loop to collect reads and write out files
         loop {
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
                 if read_infos.len() >= 4000 {
                     let fast5_file_name = format!(
-                        "{}_pass_{}_{}.fast5",
+                        "{}/{}_pass_{}_{}.fast5",
+                        &output_dir.display(),
                         config.parameters.flowcell_name,
                         &run_id[0..6],
                         file_counter
