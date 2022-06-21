@@ -37,6 +37,7 @@ In the python directory a script called make_squiggle.py exists. I recommend [co
     libopenblas-dev
 
 These can be install with `apt-get install`.
+`sudo apt-get install libcunit1 libcunit1-dev libhdf5 libhdf5-dev libopenblas-base libopenblas-dev`
 
 Now that you have all the packages required, in the python directory -
 
