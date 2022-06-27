@@ -17,6 +17,7 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TaskID
 from rich.table import Table
+from scipy.stats import skewnorm
 
 from utils import collapse_amplicon_start_ends, create_dir
 
@@ -65,7 +66,7 @@ def progress_bar_setup(total_files: int) -> Tuple[Progress, Progress, Table, Dic
     )
     return job_progress, overall_progress, progress_table, job_dict
 
-def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup: Dict[str, int], bed_file: Path = None) -> None:
+def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup: Dict[str, int], skew: int, bed_file: Path = None) -> None:
     """
     Use pyfastx to open a file and feed the sequences in turn to generate_squiggle
     Parameters
@@ -77,7 +78,9 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
     job_progress: Progress
         Progress class for the internal for loops
     task_lookup: Dict
-        Loopup the task ids to update ther progress in Rich
+        Look_up the task ids to update ther progress in Rich
+    skew: int
+        Degree of skew for a normal distribution. 0 if contig lengths are to be used
     bed_file: Path
         Bed file containing amplicons, if one is provided, default None
     Returns
@@ -112,7 +115,10 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
                 logger.warning(f"File with name {squiggle_path} already exists. Skipping...")
         job_progress.advance(task_lookup["contig_job"])
     logger.info("Creating distributions file.")
-    distributions = generate_distribution(sorted(seq_lens, key=lambda x: x[0]))
+    if skew == 0:
+        distributions = generate_distribution(sorted(seq_lens, key=lambda x: x[0]))
+    else:
+        distributions = skewnorm.rvs(args.skew, scale=7, size=len(seq_lens)).round().astype(int)
     write_distribution_json(json_file_path, distributions)
 
 def append_distributions(file_path: Path, distributions: Tuple[Tuple[int], Tuple[str]]) -> dict[str, list[int]]:
@@ -213,7 +219,6 @@ def generate_squiggle(seq: Str, squiggle_path: Path, job_progress: Progress, tas
         job_progress.advance(task_id)
     np.save(squiggle_path, arr=arr)
 
-
 def validate_args (args: argparse.Namespace) -> None:
     """
     Validate the provided args
@@ -244,6 +249,7 @@ if __name__ == "__main__":
     parser.add_argument("--bed_file", type=Path, help="Bed file for primer schemes. Splits reference into amplicons, producing a squiggle file for each amplicon. Only works with individual reference files.", default=None)
     parser.add_argument("--out_dir", type=Path, default=Path.cwd(), help="Directory to write out the squiggle arrays to. Defaults to current working directory.")
     parser.add_argument("--rev", action="store_true", help="Produce reverse and forward squiggle files, default False")
+    parser.add_argument("--skew", type=int, help="An int representing the degree of skew to be applied to the relative rate that we see different contigs. Default 0 - for an even genome length based skew", default=0)
     args = parser.parse_args()
 
     validate_args(args)
@@ -252,7 +258,7 @@ if __name__ == "__main__":
     completed_overall = 1
     with Live(progress_table, refresh_per_second=10):
         for filepath in args.reference_files:
-            get_sequence(filepath.resolve(), args.out_dir, job_progress, task_lookup, args.bed_file)
+            get_sequence(filepath.resolve(), args.out_dir, job_progress, task_lookup, args.skew, args.bed_file)
             overall_progress.update(task_lookup["overall_job"], completed=completed_overall)
             completed_overall += 1
 
