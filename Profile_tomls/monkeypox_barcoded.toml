@@ -1,0 +1,16 @@
+output_path = "/tmp/"
+
+[parameters]
+sample_name = "test"
+experiment_name = "test_2_bacteria"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "FenceSitter"
+
+[[sample]]
+input_genome = "squiggle_arrs/monkeypox/"
+mean_read_length = 20000
+weights_file = "squiggle_arrs/monkeypox/distributions.json"
+amplicon = true
+barcode = "Barcode01"
