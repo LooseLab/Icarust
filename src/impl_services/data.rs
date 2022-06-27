@@ -13,6 +13,7 @@
 //!
 //!
 
+use chrono::format::format;
 use futures::{Stream, StreamExt};
 use std::cmp::{self, min};
 use std::collections::HashMap;
@@ -32,8 +33,8 @@ use chrono::prelude::*;
 use fnv::FnvHashSet;
 use frust5_api::*;
 use memmap2::Mmap;
-use ndarray::{s, ArrayBase, ArrayView1, Dim, ViewRepr};
-use ndarray_npy::ViewNpyExt;
+use ndarray::{s, ArrayBase, ArrayView1, Dim, ViewRepr, Array1};
+use ndarray_npy::{ViewNpyExt, read_npy, ReadNpyError};
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
 use rand_distr::{Distribution, Gamma};
@@ -156,6 +157,20 @@ fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
 fn create_ouput_dir(output_dir: &std::path::PathBuf) -> std::io::Result<()>{
     create_dir_all(output_dir)?;
     Ok(())
+}
+
+fn create_barcode_views() {
+    
+}
+
+fn get_barcode_squiggle(barcode: String) -> Result<Array1<i16>, ReadNpyError>{
+    let arr: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}.squiggle.npy", barcode))?;
+    Ok(arr)
+}
+
+
+fn append_barcode_squiggle() {
+
 }
 
 /// Start the thread that will handle writing out the FAST5 file,
@@ -500,6 +515,7 @@ fn read_species_distribution(config: &Config) -> WeightedIndex<usize> {
 }
 
 /// Iterate the samples given as the input genome path listed in the config. If it is a directory - insert a view for each squiggle file in the directory. N.B This is used for amplicon based genomes.
+/// Wraps reads_views_of_data
 fn read_genome_dir_or_file (
     config: Config
 ) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)> {
