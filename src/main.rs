@@ -105,6 +105,22 @@ impl Config {
             }
         }
     }
+    /// Check if any of the samples have a barcoded field
+    pub fn is_barcoded (&self) -> bool{
+        let mut bools = Vec::with_capacity(self.sample.len());
+        for sample in &self.sample {
+            match sample.barcode {
+                Some(_) => {
+                    bools.push(true)
+                }, 
+                None => {
+                    bools.push(false)
+                }
+            }
+        }
+        bools.iter().any(|&i| i)
+    }
+
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -123,7 +139,8 @@ struct Sample {
     mean_read_length: Option<f64>,
     weight: Option<usize>,
     weights_file: Option<std::path::PathBuf>,
-    amplicon: Option<bool>
+    amplicon: Option<bool>,
+    barcode: Option<String>
 }
 
 impl Sample {
@@ -147,6 +164,7 @@ impl Sample {
             }
         }
     }
+
 }
 
 
