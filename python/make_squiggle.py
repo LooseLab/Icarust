@@ -110,7 +110,7 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
             squiggle_path = out_dir / f"{name}.squiggle.npy"
             seq_lens.append((str(name), len(seq)))
             if not squiggle_path.exists():
-                generate_squiggle(amp_seq, squiggle_path, job_progress, task_lookup)
+                generate_squiggle(seq, squiggle_path, job_progress, task_lookup)
             else:
                 logger.warning(f"File with name {squiggle_path} already exists. Skipping...")
         job_progress.advance(task_lookup["contig_job"])
