@@ -118,7 +118,7 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
     if skew == 0:
         distributions = generate_distribution(sorted(seq_lens, key=lambda x: x[0]))
     else:
-        distributions = skewnorm.rvs(args.skew, scale=7, size=len(seq_lens)).round().astype(int).tolist()
+        distributions = (np.abs(skewnorm.rvs(args.skew, scale=7, size=len(seq_lens)).round().astype(int)).tolist(), [name for name, _ in seq_lens])
     write_distribution_json(json_file_path, distributions)
 
 def append_distributions(file_path: Path, distributions: Tuple[Tuple[int], Tuple[str]]) -> dict[str, list[int]]:
