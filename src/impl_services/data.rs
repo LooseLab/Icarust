@@ -159,18 +159,26 @@ fn create_ouput_dir(output_dir: &std::path::PathBuf) -> std::io::Result<()>{
     Ok(())
 }
 
-fn create_barcode_views() {
-    
+fn create_barcode_views(config: &Config) -> HashMap<String, Array1<i16>> {
+    let mut barcodes: HashMap<String, Array1<i16>> = HashMap::new();
+    for sample in config.sample.iter() {
+        if sample.barcode.is_some() {
+            let barcode = sample.barcode.as_ref().unwrap();
+            let barcode_squig = get_barcode_squiggle(barcode).unwrap();
+            barcodes.insert(barcode.clone(), barcode_squig);
+        }
+    }
+    barcodes
 }
 
-fn get_barcode_squiggle(barcode: String) -> Result<Array1<i16>, ReadNpyError>{
+fn get_barcode_squiggle(barcode: &String) -> Result<Array1<i16>, ReadNpyError>{
     let arr: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}.squiggle.npy", barcode))?;
     Ok(arr)
 }
 
 
 fn append_barcode_squiggle() {
-
+    
 }
 
 /// Start the thread that will handle writing out the FAST5 file,
