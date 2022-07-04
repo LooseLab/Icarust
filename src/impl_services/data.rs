@@ -159,26 +159,27 @@ fn create_ouput_dir(output_dir: &std::path::PathBuf) -> std::io::Result<()>{
     Ok(())
 }
 
-fn create_barcode_views(config: &Config) -> HashMap<String, Array1<i16>> {
-    let mut barcodes: HashMap<String, Array1<i16>> = HashMap::new();
+
+/// Create a HashMap of barcode name to a tuple of the I16 squiggle of the 1st and 2nd form of the barcode.
+fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, Vec<i16>)> {
+    let mut barcodes: HashMap<String, (Vec<i16>, Vec<i16>)> = HashMap::new();
     for sample in config.sample.iter() {
         if sample.barcode.is_some() {
             let barcode = sample.barcode.as_ref().unwrap();
-            let barcode_squig = get_barcode_squiggle(barcode).unwrap();
-            barcodes.insert(barcode.clone(), barcode_squig);
+            let (barcode_squig_1, barcode_squig_2 )= get_barcode_squiggle(barcode).unwrap();
+            barcodes.insert(barcode.clone(), (barcode_squig_1, barcode_squig_2));
         }
     }
     barcodes
 }
 
-fn get_barcode_squiggle(barcode: &String) -> Result<Array1<i16>, ReadNpyError>{
-    let arr: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}.squiggle.npy", barcode))?;
-    Ok(arr)
-}
-
-
-fn append_barcode_squiggle() {
-    
+/// Read in the 1st and second squiggle for a given barcode. 
+fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError>{
+    let barcode_arr_1: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}_1.squiggle.npy", barcode))?;
+    let barcode_arr_1: Vec<i16> = barcode_arr_1.to_vec();
+    let barcode_arr_2: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}_2.squiggle.npy", barcode))?;
+    let barcode_arr_2: Vec<i16> = barcode_arr_2.to_vec();
+    Ok((barcode_arr_1, barcode_arr_2))
 }
 
 /// Start the thread that will handle writing out the FAST5 file,
@@ -526,8 +527,8 @@ fn read_species_distribution(config: &Config) -> WeightedIndex<usize> {
 /// Wraps reads_views_of_data
 fn read_genome_dir_or_file (
     config: Config
-) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)> {
-    let mut views: HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)> = HashMap::new();
+) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)> {
+    let mut views: HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)> = HashMap::new();
     for sample_info in &config.sample {
         if sample_info.input_genome.is_dir() {
             for entry in sample_info.input_genome.read_dir().expect("read_dir call failed").into_iter() {
@@ -549,7 +550,7 @@ fn read_genome_dir_or_file (
 /// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
 /// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw 
 fn read_views_of_data(
-    views: &mut HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)>,
+    views: &mut HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)>,
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample
@@ -562,7 +563,7 @@ fn read_views_of_data(
     let size = view.shape()[0];
     let file_name: String = file_info.file_name().unwrap().to_os_string().into_string().unwrap();
     let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
-    views.insert(file_name.clone(), (size, view.to_owned(), read_gamma, sample_info.is_amplicon()));
+    views.insert(file_name.clone(), (size, view.to_owned(), read_gamma, sample_info.is_amplicon(), sample_info.barcode.clone()));
 }
 
 /// Convert an elapased period of time in milliseconds tinto samples
@@ -617,10 +618,11 @@ fn generate_read(
     files: &Vec<String>,
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
-    views: &HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool)>,
+    views: &HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)>,
     rng: &mut ThreadRng,
     read_number: &mut u32,
     start_time: &u64,
+    barcode_squig: &HashMap<String, (Vec<i16>, Vec<i16>)>
 ) {
     // set stop receieivng to false so we don't accidentally not send the read
     value.stop_receiving = false;
@@ -651,10 +653,19 @@ fn generate_read(
     let read_length: usize = read_distribution.sample(&mut rand::thread_rng()) as usize;
     // don;t over slice our read
     let end: usize = cmp::min(start + read_length, file_info.0 - 1);
+    let mut base_squiggle = file_info.1.slice(s![start..end]).to_vec();
+    // Barcode name has been provided for this sample
+    if file_info.4.is_some() {
+        let barcode_name = file_info.4.as_ref().unwrap();
+        let (mut barcode_1_squig,mut barcode_2_squig) = barcode_squig.get(barcode_name).unwrap().clone();
+        base_squiggle.append(&mut barcode_2_squig);
+        barcode_1_squig.append(&mut base_squiggle);
+        base_squiggle = barcode_1_squig;
+    }
     // slice the view to get our full read
     value
         .read
-        .append(&mut file_info.1.slice(s![start..end]).to_vec());
+        .append(&mut base_squiggle);
     // set estimated duration in seconds
     value.duration = value.read.len() / 4000;
     // set the info we need to write the file out
@@ -676,7 +687,7 @@ impl DataServiceServicer {
         let config = _load_toml(&cli_opts.config);
         let channel_size = get_channel_size();
         let start_time: u64 = Utc::now().timestamp() as u64;
-
+        let barcode_squig = create_barcode_squig_hashmap(&config);
         let safe: Arc<Mutex<Vec<ReadInfo>>> =
             Arc::new(Mutex::new(Vec::with_capacity(channel_size)));
         let action_response_safe: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>> =
@@ -746,6 +757,7 @@ impl DataServiceServicer {
                                 &mut rng,
                                 &mut read_number,
                                 &start_time,
+                                &barcode_squig
                             )
                         }
                     } else if !value.read.is_empty() && !value.was_unblocked {
