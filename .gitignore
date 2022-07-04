@@ -6,3 +6,4 @@
 *.fast5
 basecall_test.py
 *LEFT*
+*.pyc
