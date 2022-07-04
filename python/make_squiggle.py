@@ -52,7 +52,6 @@ def progress_bar_setup(total_files: int) -> Tuple[Progress, Progress, Table, Dic
     overall_task = overall_progress.add_task("All Jobs", total=total_files)
 
     progress_table = Table.grid()
-    logger.info(type(progress_table))
     job_dict = {"contig_job": contig_job,
         "chunk_job": chunk_job,
         "amplicon_job": amplicon_job,
