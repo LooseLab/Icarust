@@ -558,7 +558,7 @@ fn read_views_of_data(
     global_mean_read_length: Option<f64>,
     sample_info: &Sample
 ) {
-    info!("Reading information for {:#?}", file_info.file_name());        
+    info!("Reading information for {:#?} for sample {:#?}", file_info.file_name(), sample_info);        
     let file = File::open(file_info).unwrap();
     let mmap = unsafe { Mmap::map(&file).unwrap() };
     let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
@@ -684,13 +684,13 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn new(size: usize, run_id: String, cli_opts: Cli) -> DataServiceServicer {
-        assert!(size > 0);
+    pub fn new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
         let channel_size = get_channel_size();
         let start_time: u64 = Utc::now().timestamp() as u64;
         let barcode_squig = create_barcode_squig_hashmap(&config);
+        info!("Barcodes available {:#?}", barcode_squig.keys());
         let safe: Arc<Mutex<Vec<ReadInfo>>> =
             Arc::new(Mutex::new(Vec::with_capacity(channel_size)));
         let action_response_safe: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>> =
@@ -703,7 +703,6 @@ impl DataServiceServicer {
         let dist = read_species_distribution(&config);
         let views = read_genome_dir_or_file(config.clone());
         let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
-        info!("{:#?}", files);
         let complete_read_tx = start_write_out_thread(run_id, cli_opts);
         let complete_read_tx_2 = complete_read_tx.clone();
 

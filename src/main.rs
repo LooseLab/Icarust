@@ -229,7 +229,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let devi_svc = DeviceServiceServer::new(Device {});
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {});
     let protocol_svc = ProtocolServiceServer::new(Protocol {});
-    let data_svc = DataServiceServer::new(DataServiceServicer::new(3000, run_id, args));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id, args));
 
     Server::builder()
         .add_service(log_svc)
