@@ -29,7 +29,7 @@ if __name__ == "__main__":
         "exp_script_name": "sequencing/sequencing_MIN106_DNA:FLO-MIN106:SQK-LSK109",
         "exp_script_purpose": "sequencing_run",
         "exp_start_time": '2021-12-17T16:54:04.325472+00:00',
-        "flow_cell_id": str(self.flowcell_id),  #'TEST0001',
+        "flow_cell_id": 'TEST0001',
         "flow_cell_product_code": "FLO-MIN106",
         "guppy_version": "5.0.17+99baa5b",
         "heatsink_temp": "34.066406",
@@ -57,7 +57,7 @@ if __name__ == "__main__":
         # while self.read_set:
         for read_to_add in reads_to_add:
             read_bytes = np.load("barcoding/squiggle/Barcode01_1.squiggle.npy")
-
+            # read_bytes = np.concat((read_bytes, pad_bytes))
             read0 = multi_f5.create_empty_read(
                 str(uuid4()), "str(self.run_id)"
             )
