@@ -175,6 +175,7 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
 
 /// Read in the 1st and second squiggle for a given barcode. 
 fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError>{
+    info!("Fetching barcode squiggle for barcode {}", barcode);
     let barcode_arr_1: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}_1.squiggle.npy", barcode))?;
     let barcode_arr_1: Vec<i16> = barcode_arr_1.to_vec();
     let barcode_arr_2: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}_2.squiggle.npy", barcode))?;
@@ -529,7 +530,9 @@ fn read_genome_dir_or_file (
     config: Config
 ) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)> {
     let mut views: HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)> = HashMap::new();
+    // iterate all the samples listed in teh config directory
     for sample_info in &config.sample {
+        // if the given sample input genome is actually a directory
         if sample_info.input_genome.is_dir() {
             for entry in sample_info.input_genome.read_dir().expect("read_dir call failed").into_iter() {
                 info!("{:#?}", entry.as_ref().unwrap().path());
