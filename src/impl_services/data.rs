@@ -535,8 +535,8 @@ fn read_genome_dir_or_file (
         // if the given sample input genome is actually a directory
         if sample_info.input_genome.is_dir() {
             for entry in sample_info.input_genome.read_dir().expect("read_dir call failed").into_iter() {
-                info!("{:#?}", entry.as_ref().unwrap().path());
                 if entry.as_ref().unwrap().path().extension().unwrap().to_str().unwrap() == "npy" {
+                    info!("Reading view for{:#?}", entry.as_ref().unwrap().path());
                     read_views_of_data(&mut views, &entry.unwrap().path().clone(), config.global_mean_read_length, sample_info);
                 }
             }
