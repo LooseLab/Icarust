@@ -6,7 +6,7 @@ from typing import Dict, Tuple
 import argparse
 import time
 
-import mappy as mp
+from mappy import fastx_read
 import numpy as np
 from numpy.typing import NDArray
 from pathlib import Path
@@ -19,7 +19,7 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TaskID
 from rich.table import Table
 from scipy.stats import skewnorm
 
-from utils import collapse_amplicon_start_ends, create_dir
+from utils import append_barcode_sequence, collapse_amplicon_start_ends, create_dir, get_barcode_seq
 
 logger = logging.getLogger(__name__)
 logger.addHandler(RichHandler())
@@ -65,7 +65,7 @@ def progress_bar_setup(total_files: int) -> Tuple[Progress, Progress, Table, Dic
     )
     return job_progress, overall_progress, progress_table, job_dict
 
-def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup: Dict[str, int], skew: int, bed_file: Path = None) -> None:
+def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup: Dict[str, int], skew: int, barcode: Str, bed_file: Path = None) -> None:
     """
     Use pyfastx to open a file and feed the sequences in turn to generate_squiggle
     Parameters
@@ -80,6 +80,8 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
         Look_up the task ids to update ther progress in Rich
     skew: int
         Degree of skew for a normal distribution. 0 if contig lengths are to be used
+    barcode: Str
+        The barcode for this reference,
     bed_file: Path
         Bed file containing amplicons, if one is provided, default None
     Returns
@@ -87,11 +89,11 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
 
     """
     json_file_path = out_dir / "distributions.json"
-    assert path.exists(), "Can't FinD THiS FilE"
+    assert path.exists(), "Can't FinD THiS reference FilE"
     seq_lens = []
-    total_contigs = sum((1 for name, seq, qual in mp.fastx_read(str(path.resolve()))))
+    total_contigs = sum((1 for name, seq, qual in fastx_read(str(path.resolve()))))
     job_progress.update(task_lookup["contig_job"], total=total_contigs)
-    for name, seq, qual in mp.fastx_read(str(path.resolve())):
+    for name, seq, qual in fastx_read(str(path.resolve())):
         logger.info(f"Generating squiggle for {name}")
         if args.bed_file is not None:
             logger.info("Bedfile found - parsing and splitting sequence into amplicons...")
@@ -100,6 +102,9 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
             for amp_start, amp_stop, amp_name in coords:
                 amp_seq = seq[amp_start:amp_stop]
                 seq_lens.append((amp_name, len(amp_seq)))
+                if barcode is not None:
+                    barcode_1_seq, barcode_2_seq = get_barcode_seq(barcode)
+                amp_seq = append_barcode_sequence(amp_seq, barcode_seq_1=barcode_1_seq, barcode_seq_2=barcode_2_seq)
                 logger.info(f"Amplicon {amp_name} spans reference from {amp_start}: {amp_stop}")
                 squiggle_path = out_dir / f"{name}_{amp_name}.squiggle.npy"
                 if not squiggle_path.exists():
@@ -239,6 +244,14 @@ def validate_args (args: argparse.Namespace) -> None:
     if not args.out_dir.exists():
         logger.warning(f"{args.out_dir} does not exist, attempting to create it")
         create_dir(args.out_dir)
+    
+    if args.barcode is not None:
+        assert len(args.barcode) == len(args.reference_files), "Provided number of barcodes must equal number of reference files."
+        for barcode in args.barcode:
+            print(barcode)
+            barcode_file_path = Path(f"python/barcoding/fasta/{barcode}.fasta").resolve()
+            assert barcode_file_path.exists(), "%s does not exist. Looking for the barcoding directory in the base icarust source code directory." % barcode_file_path
+    logger.info("Validations passed ✨")
 
 
 if __name__ == "__main__":
@@ -249,15 +262,18 @@ if __name__ == "__main__":
     parser.add_argument("--out_dir", type=Path, default=Path.cwd(), help="Directory to write out the squiggle arrays to. Defaults to current working directory.")
     parser.add_argument("--rev", action="store_true", help="Produce reverse and forward squiggle files, default False")
     parser.add_argument("--skew", type=int, help="An int representing the degree of skew to be applied to the relative rate that we see different contigs. Default 0 - for an even genome length based skew", default=0)
+    parser.add_argument("--barcode", type=str, help="Barcode to include. Must be between one and twelve, in the format Barcode01 Barcode02 etc. If provided, Number of barcodes must equal number of reference files.", nargs="+", default=None)
     args = parser.parse_args()
 
     validate_args(args)
     job_progress, overall_progress, progress_table, task_lookup = progress_bar_setup(len(args.reference_files))
-
+    # If we don't have barcodes, create a list of none to zip them together.
+    barcodes = args.barcode if args.barcode is not None else [None] * len(args.reference_files)
+    reference_files = zip(args.reference_files, barcodes)
     completed_overall = 1
     with Live(progress_table, refresh_per_second=10):
-        for filepath in args.reference_files:
-            get_sequence(filepath.resolve(), args.out_dir, job_progress, task_lookup, args.skew, args.bed_file)
+        for ref_filepath, barcode in reference_files:
+            get_sequence(ref_filepath.resolve(), args.out_dir, job_progress, task_lookup, args.skew, barcode, args.bed_file)
             overall_progress.update(task_lookup["overall_job"], completed=completed_overall)
             completed_overall += 1
 
