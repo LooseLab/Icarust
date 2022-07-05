@@ -2,6 +2,7 @@ from ont_fast5_api.multi_fast5 import MultiFast5File
 from uuid import uuid4
 import numpy as np
 
+
 if __name__ == "__main__":
     context_tags = {
         "barcoding_enabled": "0",
@@ -56,8 +57,12 @@ if __name__ == "__main__":
     ) as multi_f5:  # just opening this file is slow so only do it when there are reads to write
         # while self.read_set:
         for read_to_add in reads_to_add:
-            read_bytes = np.load("barcoding/squiggle/Barcode01_1.squiggle.npy")
-            # read_bytes = np.concat((read_bytes, pad_bytes))
+            read_bytes = np.load("../squiggle_arrs/monkeypox/AY753185.1_MPV_3000_1_LEFT.squiggle.npy")
+            # read_bytes = np.load("../squiggle_arrs/monkeypox_barcoded/ON563414.3_MPV_4_LEFT.squiggle.npy")
+
+            barcode_bytes = np.load("barcoding/squiggle/Barcode01_1.squiggle.npy")
+            barcode_end_bytes = np.load("barcoding/squiggle/Barcode01_2.squiggle.npy")
+            read_bytes = np.concatenate((barcode_bytes, read_bytes, barcode_end_bytes))
             read0 = multi_f5.create_empty_read(
                 str(uuid4()), "str(self.run_id)"
             )
