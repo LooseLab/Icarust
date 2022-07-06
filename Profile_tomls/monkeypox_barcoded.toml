@@ -11,6 +11,7 @@ position = "FenceSitter"
 [[sample]]
 input_genome = "squiggle_arrs/monkeypox/"
 mean_read_length = 20000
-weights_file = "squiggle_arrs/monkeypox/distributions.json"
 amplicon = true
-barcode = "Barcode01"
+barcodes = ["Barcode01", "Barcode02", "Barcode03"]
+barcode_weights = [1, 2, 3]
+uneven = true
