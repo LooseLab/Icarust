@@ -5,16 +5,14 @@
 //!
 //! The thread shares data with the get_live_reads function through a ARC<Mutex<Vec>>>
 //!
-//! Issues
-//! ------
+//! 
+//! 
 //!
-//! - Provides data on a 0.4 second loop, so you get a lot of data every 0.4 seconds
-//! - Potentially can get out of sync between Actions and Reads
-//!
-//!
-
-use chrono::format::format;
+//! 
+//! 
+//! 
 use futures::{Stream, StreamExt};
+use rand::seq::index::sample;
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
@@ -61,6 +59,39 @@ struct RunSetup {
     first: u32,
     last: u32,
     dtype: i32,
+}
+
+/// Stores the view and total length of a squiggle NPY file
+#[derive(Debug)]
+struct FileInfo {
+    contig_len: usize,
+    view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>
+}
+
+impl FileInfo {
+    pub fn new(length: usize, view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>) -> FileInfo{
+        FileInfo { contig_len: length, view }
+    }
+}
+/// Stores information about each sample listed in the config TOML.
+#[derive(Debug)]
+struct SampleInfo {
+    name: String,
+    barcodes: Option<Vec<String>>,
+    barcode: Option<String>,
+    barcode_weights: Option<Vec<usize>>,
+    uneven: Option<bool>,
+    read_len_gammas: Vec<Gamma<f64>>,
+    files: Vec<FileInfo>,
+    is_amplicon: bool,
+    amplicon_weights: Option<Vec<WeightedIndex<usize>>>
+}
+
+impl SampleInfo {
+    pub fn new(name: String, barcodes: Option<Vec<String>>, barcode: Option<String>, barcode_weights: Option<Vec<usize>>, uneven: Option<bool>,
+        is_amplicon: bool) -> SampleInfo {
+        SampleInfo { name, barcodes, barcode, barcode_weights, uneven, read_len_gammas: vec![], files: vec![], is_amplicon, amplicon_weights: None }
+    }
 }
 
 impl RunSetup {
@@ -504,22 +535,24 @@ fn stop_sending_read(
 /// Read in the sample info from the config.toml, which gives us the odds of a species genome being chosen in a multi species sample.
 ///
 /// This file can be manually created to alter library balances.
-fn read_species_distribution(config: &Config) -> WeightedIndex<usize> {
+fn read_sample_distribution_files(sample: &Sample) -> Vec<WeightedIndex<usize>> {
+    let files = sample.amplicon_weights_files.unwrap();
+    let mut weights: Vec<WeightedIndex<usize>> = Vec::with_capacity(files.len());
+    for file_path in files {
+        let file =
+        File::open(file_path).expect("Distribution JSON file not found, please see README.");
+        let w: Weights =
+            serde_json::from_reader(file).expect("Error whilst reading distribution file.");
+        weights.push(WeightedIndex::new(&w.weights).unwrap());
+    }
+    weights
+}
+
+/// Iterate the samples in the config toml and load the weights in
+fn read_sample_distribution(config: &Config) -> WeightedIndex<usize> {
     let mut weights: Vec<usize> = Vec::with_capacity(config.sample.len());
     for sample in config.sample.iter() {
-        match sample.clone().weights_file {
-            Some(weight_path) => {
-                let file =
-                File::open(weight_path).expect("Distribution JSON file not found, please see README.");
-                let w: Weights =
-                    serde_json::from_reader(file).expect("Error whilst reading distribution file.");
-                weights = w.weights;
-            },
-            None => {
-                weights.push(sample.weight.unwrap().clone());
-            }
-
-        }
+        weights.push(sample.weight.clone());
     }
     WeightedIndex::new(&weights).unwrap()
 }
@@ -528,21 +561,22 @@ fn read_species_distribution(config: &Config) -> WeightedIndex<usize> {
 /// Wraps reads_views_of_data
 fn read_genome_dir_or_file (
     config: Config
-) -> HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)> {
-    let mut views: HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)> = HashMap::new();
+) -> HashMap<String, SampleInfo> {
+    let mut views: HashMap<String, SampleInfo> = HashMap::new();
     // iterate all the samples listed in teh config directory
-    for sample_info in &config.sample {
+    for sample in &config.sample {
+        read_sample_distribution(&config);
         // if the given sample input genome is actually a directory
-        if sample_info.input_genome.is_dir() {
-            for entry in sample_info.input_genome.read_dir().expect("read_dir call failed").into_iter() {
+        if sample.input_genome.is_dir() {
+            for entry in sample.input_genome.read_dir().expect("read_dir call failed").into_iter() {
                 if entry.as_ref().unwrap().path().extension().unwrap().to_str().unwrap() == "npy" {
                     info!("Reading view for{:#?}", entry.as_ref().unwrap().path());
-                    read_views_of_data(&mut views, &entry.unwrap().path().clone(), config.global_mean_read_length, sample_info);
+                    read_views_of_data(&mut views, &entry.unwrap().path().clone(), config.global_mean_read_length, sample);
                 }
             }
         }
         else {
-            read_views_of_data(&mut views, &sample_info.input_genome.clone(), config.global_mean_read_length, sample_info);
+            read_views_of_data(&mut views, &sample.input_genome.clone(), config.global_mean_read_length, sample);
         }
     }
     views
@@ -553,7 +587,7 @@ fn read_genome_dir_or_file (
 /// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
 /// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw 
 fn read_views_of_data(
-    views: &mut HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)>,
+    views: &mut HashMap<String, SampleInfo>,
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample
@@ -566,7 +600,11 @@ fn read_views_of_data(
     let size = view.shape()[0];
     let file_name: String = file_info.file_name().unwrap().to_os_string().into_string().unwrap();
     let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
-    views.insert(file_name.clone(), (size, view.to_owned(), read_gamma, sample_info.is_amplicon(), sample_info.barcode.clone()));
+    let file_info = FileInfo::new(size, view.to_owned());
+    let sample = views.entry(sample_info.name).or_insert(SampleInfo::new(sample_info.name.clone(), sample_info.barcodes.clone(),
+     sample_info.barcode.clone(), sample_info.barcode_weights.clone(), sample_info.uneven,
+         sample_info.is_amplicon()));
+    sample.files.push(file_info)
 }
 
 /// Convert an elapased period of time in milliseconds tinto samples
@@ -621,7 +659,7 @@ fn generate_read(
     files: &Vec<String>,
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
-    views: &HashMap<String, (usize, ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>, Gamma<f64>, bool, Option<String>)>,
+    views: &HashMap<String, SampleInfo>,
     rng: &mut ThreadRng,
     read_number: &mut u32,
     start_time: &u64,

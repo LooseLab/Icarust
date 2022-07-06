@@ -139,12 +139,16 @@ struct Parameters {
 
 #[derive(Deserialize, Debug, Clone)]
 struct Sample {
+    name: String,
     input_genome: std::path::PathBuf,
     mean_read_length: Option<f64>,
-    weight: Option<usize>,
-    weights_file: Option<std::path::PathBuf>,
+    weight: usize,
+    amplicon_weights_files: Option<Vec<std::path::PathBuf>>,
     amplicon: Option<bool>,
-    barcode: Option<String>
+    barcode: Option<String>,
+    barcodes: Option<Vec<String>>,
+    barcode_weights: Option<Vec<usize>>,
+    uneven: Option<bool>
 }
 
 impl Sample {
