@@ -577,7 +577,6 @@ fn stop_sending_read(
 fn process_samples_from_config(
     config: &Config,
 ) -> (HashMap<String, SampleInfo>, WeightedIndex<usize>) {
-    let is_barcoded: bool = false;
     // a hashamp keyed from sample into the information about this sample that we need. The Sampleinfo value is created in the function generate_amplicon_sampling_distribution
     // and is then mutated by accessing the hashmap.
     let mut views: HashMap<String, SampleInfo> = HashMap::new();
@@ -621,7 +620,6 @@ fn process_samples_from_config(
                 }
             }
             // if the sample is an amplicon based sample we want to get the relative distributions
-            info!("{:#?}", views);
             let sample_info = views.get_mut(&sample.name).unwrap();
 
             let distributions: Vec<WeightedIndex<usize>> = match &sample
@@ -633,7 +631,7 @@ fn process_samples_from_config(
                     let num_files = sample_info.files.len();
                     let mut file_distributions = vec![];
                     if let Some(barcodes) = &sample.barcodes {
-                        for barcode in barcodes.iter() {
+                        for _barcode in barcodes.iter() {
                             let disty =
                                 generate_file_sampling_distribution(num_files, &mut rng);
                             file_distributions.push(disty);
@@ -648,9 +646,8 @@ fn process_samples_from_config(
             sample_info.file_weights = distributions;
 
             // Time for barcoding shenanigans
-            let mut barcode_dists = None;
             if sample.is_barcoded() {
-                barcode_dists = Some(generate_barcode_weights(
+                let barcode_dists = Some(generate_barcode_weights(
                     sample.barcode_weights.as_ref(),
                     &mut rng,
                     sample.barcodes.as_ref().unwrap().len(),
@@ -678,8 +675,10 @@ fn process_samples_from_config(
                     sample.barcodes.as_ref().unwrap().len(),
                 ));
             }
+            sample_info.barcode_weights = barcode_dists;
         }
     }
+    info!("{:#?}", views);
     (views, sample_weights)
 }
 
