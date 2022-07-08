@@ -104,7 +104,7 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
                 seq_lens.append((amp_name, len(amp_seq)))
                 if barcode is not None:
                     barcode_1_seq, barcode_2_seq = get_barcode_seq(barcode)
-                amp_seq = append_barcode_sequence(amp_seq, barcode_seq_1=barcode_1_seq, barcode_seq_2=barcode_2_seq)
+                    amp_seq = append_barcode_sequence(amp_seq, barcode_seq_1=barcode_1_seq, barcode_seq_2=barcode_2_seq)
                 logger.info(f"Amplicon {amp_name} spans reference from {amp_start}: {amp_stop}")
                 squiggle_path = out_dir / f"{name}_{amp_name}.squiggle.npy"
                 if not squiggle_path.exists():
