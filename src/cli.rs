@@ -44,7 +44,7 @@ impl Cli {
             .init();
     }
     /// Check the config file is where specified
-    pub fn check_config_exists (&self) {
+    pub fn check_config_exists(&self) {
         assert!(self.config.exists())
     }
 }
