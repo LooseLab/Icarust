@@ -5,18 +5,17 @@
 //!
 //! The thread shares data with the get_live_reads function through a ARC<Mutex<Vec>>>
 //!
-//! 
-//! 
 //!
-//! 
-//! 
-//! 
+//!
+//!
+//!
+//!
+//!
 use futures::{Stream, StreamExt};
-use rand::seq::index::sample;
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{File, create_dir_all};
+use std::fs::{create_dir_all, File};
 use std::mem;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -31,16 +30,15 @@ use chrono::prelude::*;
 use fnv::FnvHashSet;
 use frust5_api::*;
 use memmap2::Mmap;
-use ndarray::{s, ArrayBase, ArrayView1, Dim, ViewRepr, Array1};
-use ndarray_npy::{ViewNpyExt, read_npy, ReadNpyError};
+use ndarray::{s, Array1, ArrayBase, ArrayView1, Dim, ViewRepr};
+use ndarray_npy::{read_npy, ReadNpyError, ViewNpyExt};
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
-use rand_distr::{Distribution, Gamma};
+use rand_distr::{Distribution, Gamma, SkewNormal};
 use serde::Deserialize;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
-use crate::{_load_toml, Config, Sample};
 use crate::cli::Cli;
 use crate::services::minknow_api::data::data_service_server::DataService;
 use crate::services::minknow_api::data::get_data_types_response::DataType;
@@ -51,6 +49,7 @@ use crate::services::minknow_api::data::{
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
 use crate::services::setup_conf::get_channel_size;
+use crate::{Config, Sample, _load_toml};
 
 /// unused
 #[derive(Debug)]
@@ -62,15 +61,33 @@ struct RunSetup {
 }
 
 /// Stores the view and total length of a squiggle NPY file
-#[derive(Debug)]
 struct FileInfo {
     contig_len: usize,
-    view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>
+    view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>,
 }
 
 impl FileInfo {
-    pub fn new(length: usize, view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>) -> FileInfo{
-        FileInfo { contig_len: length, view }
+    pub fn new(
+        length: usize,
+        view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>,
+    ) -> FileInfo {
+        FileInfo {
+            contig_len: length,
+            view,
+        }
+    }
+}
+impl fmt::Debug for FileInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{{\n
+        Contig_length: {}
+        Has View: {}
+        }}",
+            self.contig_len,
+            self.view.is_empty()
+        )
     }
 }
 /// Stores information about each sample listed in the config TOML.
@@ -78,19 +95,35 @@ impl FileInfo {
 struct SampleInfo {
     name: String,
     barcodes: Option<Vec<String>>,
-    barcode: Option<String>,
-    barcode_weights: Option<Vec<usize>>,
+    barcode_weights: Option<WeightedIndex<usize>>,
     uneven: Option<bool>,
-    read_len_gammas: Vec<Gamma<f64>>,
+    read_len_gamma: Gamma<f64>,
     files: Vec<FileInfo>,
     is_amplicon: bool,
-    amplicon_weights: Option<Vec<WeightedIndex<usize>>>
+    is_barcoded:bool,
+    file_weights: Vec<WeightedIndex<usize>>,
 }
 
 impl SampleInfo {
-    pub fn new(name: String, barcodes: Option<Vec<String>>, barcode: Option<String>, barcode_weights: Option<Vec<usize>>, uneven: Option<bool>,
-        is_amplicon: bool) -> SampleInfo {
-        SampleInfo { name, barcodes, barcode, barcode_weights, uneven, read_len_gammas: vec![], files: vec![], is_amplicon, amplicon_weights: None }
+    pub fn new(
+        name: String,
+        barcodes: Option<Vec<String>>,
+        uneven: Option<bool>,
+        is_amplicon: bool,
+        is_barcoded: bool,
+        read_len_gamma: Gamma<f64>
+    ) -> SampleInfo {
+        SampleInfo {
+            name,
+            barcodes,
+            barcode_weights: None,
+            uneven,
+            read_len_gamma,
+            files: vec![],
+            is_amplicon,
+            is_barcoded,
+            file_weights: vec![],
+        }
     }
 }
 
@@ -131,10 +164,7 @@ struct ReadInfo {
     channel: usize,
     stop_receiving: bool,
     read_number: u32,
-    start_coord: usize,
-    stop_coord: usize,
     was_unblocked: bool,
-    file_name: String,
     write_out: bool,
     start_time: u64,
     start_time_seconds: usize,
@@ -176,7 +206,6 @@ impl fmt::Debug for ReadInfo {
     }
 }
 
-
 /// Convert our vec of i16 signal to a vec of bytes to be transferred to the read until API
 fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
     let mut dst: Vec<u8> = vec![0; raw_data.len() * 2];
@@ -185,31 +214,37 @@ fn convert_to_u8(raw_data: Vec<i16>) -> Vec<u8> {
 }
 
 /// Create the output dir to write fast5 too, if it doesn't already exist
-fn create_ouput_dir(output_dir: &std::path::PathBuf) -> std::io::Result<()>{
+fn create_ouput_dir(output_dir: &std::path::PathBuf) -> std::io::Result<()> {
     create_dir_all(output_dir)?;
     Ok(())
 }
-
 
 /// Create a HashMap of barcode name to a tuple of the I16 squiggle of the 1st and 2nd form of the barcode.
 fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, Vec<i16>)> {
     let mut barcodes: HashMap<String, (Vec<i16>, Vec<i16>)> = HashMap::new();
     for sample in config.sample.iter() {
-        if sample.barcode.is_some() {
-            let barcode = sample.barcode.as_ref().unwrap();
-            let (barcode_squig_1, barcode_squig_2 )= get_barcode_squiggle(barcode).unwrap();
-            barcodes.insert(barcode.clone(), (barcode_squig_1, barcode_squig_2));
+        if let Some(barcode_vec) = &sample.barcodes {
+            for barcode in barcode_vec.iter() {
+                let (barcode_squig_1, barcode_squig_2) = get_barcode_squiggle(barcode).unwrap();
+                barcodes.insert(barcode.clone(), (barcode_squig_1, barcode_squig_2));
+            }
         }
     }
     barcodes
 }
 
-/// Read in the 1st and second squiggle for a given barcode. 
-fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError>{
+/// Read in the 1st and second squiggle for a given barcode.
+fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError> {
     info!("Fetching barcode squiggle for barcode {}", barcode);
-    let barcode_arr_1: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}_1.squiggle.npy", barcode))?;
+    let barcode_arr_1: Array1<i16> = read_npy(format!(
+        "python/barcoding/squiggle/{}_1.squiggle.npy",
+        barcode
+    ))?;
     let barcode_arr_1: Vec<i16> = barcode_arr_1.to_vec();
-    let barcode_arr_2: Array1<i16> = read_npy(format!("python/barcoding/squiggle/{}_2.squiggle.npy", barcode))?;
+    let barcode_arr_2: Array1<i16> = read_npy(format!(
+        "python/barcoding/squiggle/{}_2.squiggle.npy",
+        barcode
+    ))?;
     let barcode_arr_2: Vec<i16> = barcode_arr_2.to_vec();
     Ok((barcode_arr_1, barcode_arr_2))
 }
@@ -223,13 +258,11 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
         let config = _load_toml(&x.config);
-        let experiment_duration =  config.get_experiment_duration_set().to_string();
+        let experiment_duration = config.get_experiment_duration_set().to_string();
         // std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
         let context_tags = HashMap::from([
             ("barcoding_enabled", "0"),
-            (
-                "experiment_duration_set", experiment_duration.as_str()
-            ),
+            ("experiment_duration_set", experiment_duration.as_str()),
             ("experiment_type", "genomic_dna"),
             ("local_basecalling", "0"),
             ("package", "bream4"),
@@ -269,7 +302,10 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
             ("installation_type", "nc"),
             ("local_firmware_file", "1"),
             ("operating_system", "ubuntu 16.04"),
-            ("protocol_group_id", config.parameters.experiment_name.as_str()),
+            (
+                "protocol_group_id",
+                config.parameters.experiment_name.as_str(),
+            ),
             ("protocol_run_id", "SYNTHETIC_RUN"),
             ("protocol_start_time", iso_time.as_str()),
             ("protocols_version", "6.3.5"),
@@ -282,9 +318,11 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
             FnvHashSet::with_capacity_and_hasher(4000, Default::default());
         let mut file_counter = 0;
         let output_dir = PathBuf::from(format!(
-            "{}/{}/{}/fast5/", config.output_path.display(),
+            "{}/{}/{}/fast5/",
+            config.output_path.display(),
             config.parameters.experiment_name,
-            config.parameters.sample_name));
+            config.parameters.sample_name
+        ));
         if !output_dir.exists() {
             create_ouput_dir(&output_dir).unwrap();
         }
@@ -406,9 +444,7 @@ fn start_unblock_thread(
 /// effect on the run itself, but could be implemented to do so in the future if required.
 fn setup(setuppy: get_live_reads_request::Request) -> (usize, usize, usize) {
     info!("Received stream setup, setting up.");
-    if let get_live_reads_request::Request::Setup(_h) = setuppy {
-
-    }
+    if let get_live_reads_request::Request::Setup(_h) = setuppy {}
     // return we have prcessed 1 action
     (1, 0, 0)
 }
@@ -443,13 +479,17 @@ fn take_actions(
                         zero_index_channel,
                         action.read.unwrap(),
                         read_numbers_actioned,
-                        read_infos.get_mut(zero_index_channel).unwrap_or_else(|| panic!("failed to unblock on channel {}", action.channel)),
+                        read_infos.get_mut(zero_index_channel).unwrap_or_else(|| {
+                            panic!("failed to unblock on channel {}", action.channel)
+                        }),
                     ),
                     action::Action::StopFurtherData(stop) => stop_sending_read(
                         stop,
                         action.action_id,
                         zero_index_channel,
-                        read_infos.get_mut(zero_index_channel).unwrap_or_else(|| panic!("failed to stop receiving on channel {}", action.channel)),
+                        read_infos.get_mut(zero_index_channel).unwrap_or_else(|| {
+                            panic!("failed to stop receiving on channel {}", action.channel)
+                        }),
                     ),
                 };
                 // add_response.push(action_response);
@@ -532,15 +572,126 @@ fn stop_sending_read(
     )
 }
 
+/// Read the config file and parse the sample fields. This then returns any necessary Sample infos, setup
+/// according to the structure of the run. This structure changes based on whether the sample is barcoded, amplicons based and has provided weights.
+fn process_samples_from_config(
+    config: &Config,
+) -> (HashMap<String, SampleInfo>, WeightedIndex<usize>) {
+    let is_barcoded: bool = false;
+    // a hashamp keyed from sample into the information about this sample that we need. The Sampleinfo value is created in the function generate_amplicon_sampling_distribution
+    // and is then mutated by accessing the hashmap.
+    let mut views: HashMap<String, SampleInfo> = HashMap::new();
+    // iterate all the samples listed in the config directory and fetch their relative weights
+    let sample_weights = read_sample_distribution(&config);
+    // Seeded rng for generated weighted dists
+    let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(config.get_rand_seed());
+
+    // Now iterate all the samples and setup any required fields for the type of run wie have. Possible combos:
+    //      Amplicon barcoded
+    //      Amplicon unbarcoded
+    //      Non Amplicon barcoded
+    //      Non Amplicon Unbarcoded
+    for sample in &config.sample {
+        // if the given sample input genome is actually a directory
+        if sample.input_genome.is_dir() {
+            for entry in sample
+                .input_genome
+                .read_dir()
+                .expect("read_dir call failed")
+                .into_iter()
+            {
+                // only read files that are .npy squiggle
+                if entry
+                    .as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    == "npy"
+                {
+                    info!("Reading view for{:#?}", entry.as_ref().unwrap().path());
+                    read_views_of_data(
+                        &mut views,
+                        &entry.unwrap().path().clone(),
+                        config.global_mean_read_length,
+                        sample,
+                    );
+                }
+            }
+            // if the sample is an amplicon based sample we want to get the relative distributions
+            info!("{:#?}", views);
+            let sample_info = views.get_mut(&sample.name).unwrap();
+
+            let distributions: Vec<WeightedIndex<usize>> = match &sample
+                .weights_files
+            {
+                Some(_) => read_sample_distribution_files(sample),
+                // generate amplicon distributions for each barcode
+                None => {
+                    let num_files = sample_info.files.len();
+                    let mut file_distributions = vec![];
+                    if let Some(barcodes) = &sample.barcodes {
+                        for barcode in barcodes.iter() {
+                            let disty =
+                                generate_file_sampling_distribution(num_files, &mut rng);
+                            file_distributions.push(disty);
+                        }
+                    } else {
+                        let disty = generate_file_sampling_distribution(num_files, &mut rng);
+                        file_distributions.push(disty)
+                    }
+                    file_distributions
+                }
+            };
+            sample_info.file_weights = distributions;
+
+            // Time for barcoding shenanigans
+            let mut barcode_dists = None;
+            if sample.is_barcoded() {
+                barcode_dists = Some(generate_barcode_weights(
+                    sample.barcode_weights.as_ref(),
+                    &mut rng,
+                    sample.barcodes.as_ref().unwrap().len(),
+                ));
+                sample_info.barcode_weights = barcode_dists;
+            }
+        // only a path to a single file has been passed 
+        } else {
+            read_views_of_data(
+                &mut views,
+                &sample.input_genome.clone(),
+                config.global_mean_read_length,
+                sample,
+            );
+
+            // Time for barcoding shenanigans
+            let sample_info = views.get_mut(&sample.name).unwrap();
+            // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn so we only ever see this file when we generate a read
+            sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
+            let mut barcode_dists = None;
+            if sample.is_barcoded() {
+                barcode_dists = Some(generate_barcode_weights(
+                    sample.barcode_weights.as_ref(),
+                    &mut rng,
+                    sample.barcodes.as_ref().unwrap().len(),
+                ));
+            }
+        }
+    }
+    (views, sample_weights)
+}
+
 /// Read in the sample info from the config.toml, which gives us the odds of a species genome being chosen in a multi species sample.
 ///
 /// This file can be manually created to alter library balances.
 fn read_sample_distribution_files(sample: &Sample) -> Vec<WeightedIndex<usize>> {
-    let files = sample.amplicon_weights_files.unwrap();
+    let files = sample.weights_files.as_ref().unwrap();
     let mut weights: Vec<WeightedIndex<usize>> = Vec::with_capacity(files.len());
     for file_path in files {
         let file =
-        File::open(file_path).expect("Distribution JSON file not found, please see README.");
+            File::open(file_path).expect("Distribution JSON file not found, please see README.");
         let w: Weights =
             serde_json::from_reader(file).expect("Error whilst reading distribution file.");
         weights.push(WeightedIndex::new(&w.weights).unwrap());
@@ -548,62 +699,92 @@ fn read_sample_distribution_files(sample: &Sample) -> Vec<WeightedIndex<usize>> 
     weights
 }
 
+/// Generate a weighted index using a skewed normal distribution. This weigted index will be of len num_amplicons.
+fn generate_file_sampling_distribution(
+    num_amplicons: usize,
+    randay: &mut rand::rngs::StdRng,
+) -> WeightedIndex<usize> {
+    let mut distribution: Vec<usize> = vec![];
+    let skew_normal: SkewNormal<f64> = SkewNormal::new(7.0, 2.0, 1.0).unwrap();
+    for i in 0..num_amplicons {
+        distribution.push(skew_normal.sample(randay).ceil() as usize);
+    }
+    WeightedIndex::new(&distribution).unwrap()
+}
+
+/// Generate the weighted index for all the barcodes on a sample
+fn generate_barcode_weights(
+    barcode_weights: Option<&Vec<usize>>,
+    randay: &mut rand::rngs::StdRng,
+    num_barcodes: usize,
+) -> WeightedIndex<usize> {
+    let barcode_weigths_dist = match barcode_weights {
+        Some(weights_vec) => WeightedIndex::new(weights_vec).unwrap(),
+        // No weights provided so we will generate some using the random seed provided
+        None => {
+            let mut weights: Vec<usize> = vec![];
+            for _ in 0..num_barcodes {
+                weights.push(randay.gen())
+            }
+            WeightedIndex::new(&weights).unwrap()
+        }
+    };
+    barcode_weigths_dist
+}
+
 /// Iterate the samples in the config toml and load the weights in
 fn read_sample_distribution(config: &Config) -> WeightedIndex<usize> {
     let mut weights: Vec<usize> = Vec::with_capacity(config.sample.len());
     for sample in config.sample.iter() {
-        weights.push(sample.weight.clone());
+        weights.push(sample.weight);
     }
     WeightedIndex::new(&weights).unwrap()
 }
 
 /// Iterate the samples given as the input genome path listed in the config. If it is a directory - insert a view for each squiggle file in the directory. N.B This is used for amplicon based genomes.
 /// Wraps reads_views_of_data
-fn read_genome_dir_or_file (
-    config: Config
-) -> HashMap<String, SampleInfo> {
-    let mut views: HashMap<String, SampleInfo> = HashMap::new();
-    // iterate all the samples listed in teh config directory
-    for sample in &config.sample {
-        read_sample_distribution(&config);
-        // if the given sample input genome is actually a directory
-        if sample.input_genome.is_dir() {
-            for entry in sample.input_genome.read_dir().expect("read_dir call failed").into_iter() {
-                if entry.as_ref().unwrap().path().extension().unwrap().to_str().unwrap() == "npy" {
-                    info!("Reading view for{:#?}", entry.as_ref().unwrap().path());
-                    read_views_of_data(&mut views, &entry.unwrap().path().clone(), config.global_mean_read_length, sample);
-                }
-            }
-        }
-        else {
-            read_views_of_data(&mut views, &sample.input_genome.clone(), config.global_mean_read_length, sample);
-        }
-    }
-    views
-}
+// fn read_genome_dir_or_file (
+//     config: Config
+// ) -> HashMap<String, SampleInfo> {
+
+// }
 
 /// Creates Memory mapped views of the precalculated numpy arrays of squiggle for reference genomes, generated by make_squiggle.py
 ///
 /// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
-/// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw 
+/// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw
 fn read_views_of_data(
     views: &mut HashMap<String, SampleInfo>,
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
-    sample_info: &Sample
+    sample_info: &Sample,
 ) {
-    info!("Reading information for {:#?} for sample {:#?}", file_info.file_name(), sample_info);        
+    info!(
+        "Reading information for {:#?} for sample {:#?}",
+        file_info.file_name(),
+        sample_info
+    );
     let file = File::open(file_info).unwrap();
     let mmap = unsafe { Mmap::map(&file).unwrap() };
     let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
         ArrayView1::<i16>::view_npy(&mmap).unwrap();
     let size = view.shape()[0];
-    let file_name: String = file_info.file_name().unwrap().to_os_string().into_string().unwrap();
+    let file_name: String = file_info
+        .file_name()
+        .unwrap()
+        .to_os_string()
+        .into_string()
+        .unwrap();
     let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
     let file_info = FileInfo::new(size, view.to_owned());
-    let sample = views.entry(sample_info.name).or_insert(SampleInfo::new(sample_info.name.clone(), sample_info.barcodes.clone(),
-     sample_info.barcode.clone(), sample_info.barcode_weights.clone(), sample_info.uneven,
-         sample_info.is_amplicon()));
+    let sample = views.entry(sample_info.name.clone()).or_insert(SampleInfo::new(
+        sample_info.name.clone(),
+        sample_info.barcodes.clone(),
+        sample_info.uneven,
+        sample_info.is_amplicon(),
+        sample_info.is_barcoded(),
+        read_gamma
+    ));
     sample.files.push(file_info)
 }
 
@@ -634,10 +815,7 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             channel: channel_number,
             stop_receiving: false,
             read_number: 0,
-            start_coord: 0,
-            stop_coord: 0,
             was_unblocked: false,
-            file_name: "".to_string(),
             write_out: false,
             start_time: 0,
             start_time_seconds: 0,
@@ -656,14 +834,14 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
 
 /// Generate an inital read, which is stored as a ReadInfo in the channel_read_info vec. This is mutated in place.
 fn generate_read(
-    files: &Vec<String>,
+    samples: &Vec<String>,
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
     views: &HashMap<String, SampleInfo>,
-    rng: &mut ThreadRng,
+    rng: &mut StdRng,
     read_number: &mut u32,
     start_time: &u64,
-    barcode_squig: &HashMap<String, (Vec<i16>, Vec<i16>)>
+    barcode_squig: &HashMap<String, (Vec<i16>, Vec<i16>)>,
 ) {
     // set stop receieivng to false so we don't accidentally not send the read
     value.stop_receiving = false;
@@ -678,41 +856,43 @@ fn generate_read(
     value.start_time_seconds = (Utc::now().timestamp() as u64 - start_time) as usize;
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
-    let file_choice: &String = &files[dist.sample(rng)];
-    let file_info = &views[file_choice];
-    // start point in file
-    let start: usize = match file_info.3 {
-        true => {
-            0
-        }, 
-        false => {
-            rng.gen_range(0..file_info.0 - 1000) as usize
-        }
+    let sample_choice: &String = &samples[dist.sample(rng)];
+    let sample_info = &views[sample_choice];
+    // choose a barcode if we need to - else we always use the first distirbution in the vec
+    let mut file_weight_choice: usize = 0;
+    let mut barcode = None;
+    if sample_info.is_barcoded {
+        // this is analagous to the choice of the barcode as well - the file weights are in vec with one weight per barcode
+        file_weight_choice = sample_info.barcode_weights.as_ref().unwrap().sample(rng);
+        barcode = Some(sample_info.barcodes.as_ref().unwrap().get(file_weight_choice).unwrap())
+    }
+    // need to choose a file at this point
+    let file_info = sample_info.files.get(sample_info.file_weights.get(file_weight_choice).unwrap().sample(rng)).unwrap();
+    // start point in file, match is for amplicons so we don't start halfway through
+    let start: usize = match sample_info.is_amplicon {
+        true => 0,
+        false => rng.gen_range(0..file_info.contig_len - 1000) as usize,
     };
     // Get our distribution from either the Sample specified Gamma or the global read length
-    let read_distribution = file_info.2;
-    let read_length: usize = read_distribution.sample(&mut rand::thread_rng()) as usize;
+    let read_distribution = sample_info.read_len_gamma;
+    let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
-    let end: usize = cmp::min(start + read_length, file_info.0 - 1);
-    let mut base_squiggle = file_info.1.slice(s![start..end]).to_vec();
+    let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
+    let mut base_squiggle = file_info.view.slice(s![start..end]).to_vec();
     // Barcode name has been provided for this sample
-    if file_info.4.is_some() {
-        let barcode_name = file_info.4.as_ref().unwrap();
-        let (mut barcode_1_squig,mut barcode_2_squig) = barcode_squig.get(barcode_name).unwrap().clone();
+    if sample_info.is_barcoded {
+        
+        let (mut barcode_1_squig, mut barcode_2_squig) =
+            barcode_squig.get(barcode.unwrap()).unwrap().clone();
         base_squiggle.append(&mut barcode_2_squig);
         barcode_1_squig.append(&mut base_squiggle);
         base_squiggle = barcode_1_squig;
     }
     // slice the view to get our full read
-    value
-        .read
-        .append(&mut base_squiggle);
+    value.read.append(&mut base_squiggle);
     // set estimated duration in seconds
     value.duration = value.read.len() / 4000;
-    // set the info we need to write the file out
-    value.file_name = file_choice.to_string();
-    value.start_coord = start;
-    value.stop_coord = end;
+
     let read_id = Uuid::new_v4().to_string();
     value.read_id = read_id;
     // reset these time based metrics
@@ -737,23 +917,22 @@ impl DataServiceServicer {
         let thread_safe = Arc::clone(&safe);
         let is_setup = Arc::new(Mutex::new(false));
         let is_safe_setup = Arc::clone(&is_setup);
-        
-        let dist = read_species_distribution(&config);
-        let views = read_genome_dir_or_file(config.clone());
+
+        // let dist = read_species_distribution(&config);
+        let (views, dist) = process_samples_from_config(&config);
         let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
         let complete_read_tx = start_write_out_thread(run_id, cli_opts);
         let complete_read_tx_2 = complete_read_tx.clone();
 
         // start the thread to generate data
         thread::spawn(move || {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::SeedableRng::seed_from_u64(1234567);
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
             setup_channel_vec(channel_size, &thread_safe);
 
             // If we have a global mean read_length set up a gamma distribution for it
-
 
             loop {
                 debug!("Sequencer mock loop start");
@@ -797,11 +976,11 @@ impl DataServiceServicer {
                                 &mut rng,
                                 &mut read_number,
                                 &start_time,
-                                &barcode_squig
+                                &barcode_squig,
                             )
                         }
                     } else if !value.read.is_empty() && !value.was_unblocked {
-                            reads_incremented += 1;
+                        reads_incremented += 1;
                     }
                 }
                 // info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
