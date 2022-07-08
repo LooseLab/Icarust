@@ -4,16 +4,16 @@
 //! # Icarust
 //!
 //! A binary for running a mock, read-fish compatible grpc server to test live unblocking read-until experiments.
-//! 
+//!
 //! The details for configuring the run can be found in Profile_tomls.
 //!
 //! Simply `cargo run --config <config.toml>` in the directory to start the server, which hosts the Manager Server on 127.0.0.1:10000
 //!
 //! Has one position, which is hosted on 127.0.0.1:10001
-//! 
-mod impl_services;
+//!
 /// The module pertaining the CLI code
 pub mod cli;
+mod impl_services;
 #[macro_use]
 extern crate log;
 
@@ -59,50 +59,58 @@ struct Config {
     parameters: Parameters,
     sample: Vec<Sample>,
     output_path: std::path::PathBuf,
-    global_mean_read_length: Option<f64>
+    global_mean_read_length: Option<f64>,
+    random_seed: Option<u64>,
 }
 
 impl Config {
     /// Check if a global mean read length has been set
-    pub fn has_global_length (&self) -> bool {
-        let has_len = match self.global_mean_read_length{ 
-            Some(_) =>  {
-                true
-            }
-            None => {
-                false
-            } 
+    pub fn has_global_length(&self) -> bool {
+        let has_len = match self.global_mean_read_length {
+            Some(_) => true,
+            None => false,
         };
         has_len
     }
-    /// Get the usize version of the run duration so we can stop running if we exceed it. 
+    /// Get the usize version of the run duration so we can stop running if we exceed it.
     /// If not set a default value of 4800 is returned
-    pub fn get_experiment_duration_set (&self) -> usize {
-        let duration = match self.parameters.experiment_duration_set{ 
-            Some(duration) =>  {
-                duration
-            }
+    pub fn get_experiment_duration_set(&self) -> usize {
+        let duration = match self.parameters.experiment_duration_set {
+            Some(duration) => duration,
             None => {
                 // wasn't set so default 4800
                 4800
-            } 
+            }
         };
         duration
     }
+    // Get the User set random seed. If not found provide one as a random usize
+    pub fn get_rand_seed(&self) -> u64 {
+        match self.random_seed {
+            Some(seed) => seed,
+            None => rand::random::<u64>(),
+        }
+    }
 
-    pub fn check_fields (&self) {
+    // Check config fields and error out if there's a problem
+    pub fn check_fields(&self) {
         for sample in &self.sample {
             match sample.mean_read_length {
-                Some(_) => {
-                    continue
-                }, 
-                None => {
-                    match self.global_mean_read_length {
-                        Some(_) => {
-                            continue
-                        },
-                        None => {
-                            panic!("Sample {} does not have a mean read length and no global read length is set.", sample.input_genome.display());
+                Some(_) => {}
+                None => match self.global_mean_read_length {
+                    Some(_) => {}
+                    None => {
+                        panic!("Sample {} does not have a mean read length and no global read length is set.", sample.input_genome.display());
+                    }
+                },
+            }
+            if sample.is_amplicon() {
+                if sample.is_barcoded() {
+                    if let Some(barcodes) = &sample.barcodes {
+                        if let Some(read_files) = &sample.weights_files {
+                            if barcodes.len() != read_files.len() {
+                                panic!("If providing amplicon weights, it is necessary to provide as many as there are barcodes.")
+                            }
                         }
                     }
                 }
@@ -110,21 +118,16 @@ impl Config {
         }
     }
     /// Check if any of the samples have a barcoded field
-    pub fn is_barcoded (&self) -> bool{
+    pub fn is_barcoded(&self) -> bool {
         let mut bools = Vec::with_capacity(self.sample.len());
         for sample in &self.sample {
-            match sample.barcode {
-                Some(_) => {
-                    bools.push(true)
-                }, 
-                None => {
-                    bools.push(false)
-                }
+            match sample.barcodes {
+                Some(_) => bools.push(true),
+                None => bools.push(false),
             }
         }
         bools.iter().any(|&i| i)
     }
-
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -134,7 +137,7 @@ struct Parameters {
     flowcell_name: String,
     experiment_duration_set: Option<usize>,
     device_id: String,
-    position: String
+    position: String,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -143,38 +146,33 @@ struct Sample {
     input_genome: std::path::PathBuf,
     mean_read_length: Option<f64>,
     weight: usize,
-    amplicon_weights_files: Option<Vec<std::path::PathBuf>>,
+    weights_files: Option<Vec<std::path::PathBuf>>,
     amplicon: Option<bool>,
-    barcode: Option<String>,
     barcodes: Option<Vec<String>>,
     barcode_weights: Option<Vec<usize>>,
-    uneven: Option<bool>
+    uneven: Option<bool>,
 }
 
 impl Sample {
     pub fn get_read_len_dist(&self, global_read_len: Option<f64>) -> Gamma<f64> {
         match self.mean_read_length {
-            Some(mrl) => {
-                Gamma::new(mrl / 450.0 * 4000.0,1.0).unwrap()
-            },
-            None => {
-                Gamma::new(global_read_len.unwrap() / 450.0 * 4000.0, 1.0).unwrap()
-            }
+            Some(mrl) => Gamma::new(mrl / 450.0 * 4000.0, 1.0).unwrap(),
+            None => Gamma::new(global_read_len.unwrap() / 450.0 * 4000.0, 1.0).unwrap(),
         }
     }
-    pub fn is_amplicon(&self) -> bool{
+    pub fn is_amplicon(&self) -> bool {
         match self.amplicon {
-            Some(the_truth) => {
-                the_truth
-            },
-            None => {
-                false
-            }
+            Some(the_truth) => the_truth,
+            None => false,
         }
     }
-
+    pub fn is_barcoded(&self) -> bool {
+        match self.barcodes {
+            Some(_) => true,
+            None => false,
+        }
+    }
 }
-
 
 /// Loads our config TOML to get the sample name, experiment name and flowcell name, which is returned as a Config struct.
 fn _load_toml(file_path: &std::path::PathBuf) -> Config {
@@ -184,14 +182,12 @@ fn _load_toml(file_path: &std::path::PathBuf) -> Config {
     config
 }
 
-
 /// Main function - Runs two asynchronous GRPC servers
 /// The first server is the manager server, which here manages available sequencing positions and minknow version information.
 /// Once a client connects to the manager it may then connect to the second GRPC server, which manages all the services relating to the
 /// sequencing position.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     let args = cli::Cli::parse();
     args.set_logging();
     args.check_config_exists();
