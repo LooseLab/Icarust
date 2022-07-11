@@ -1,0 +1,33 @@
+output_path = "/tmp"
+global_mean_read_length = 20000 #optional
+random_seed = 10
+
+[parameters]
+sample_name = "my_sample_name"
+experiment_name = "my_experiment_name"
+flowcell_name = "my_flowcell_name"
+experiment_duration = 4800
+device_id = "my_device_id"
+position = "my_position"
+
+[[sample]]
+name = "Sample1"
+input_genome = "/path/to/genome/squiggle.npy"
+mean_read_length = 40000.0
+weight = 1
+weights_files = ["/path/to/distibution_file_1.json", "/path/to/distirbution_file_2.json"] #optional
+amplicon = false # Not a PCR based run # optional
+barcodes = ["Barcode01", "Barcode02"] # optional
+barcode_weights = [1,2] # Optional
+uneven = false # Optional
+
+[[sample]]
+name = "Sample2"
+input_genome = "/path/to/genome/squiggle.npy"
+mean_read_length = 40000.0
+weight = 1
+weights_files = ["/path/to/distibution_file_1.json", "/path/to/distirbution_file_2.json"] #optional
+amplicon = false # Not a PCR based run # optional
+barcodes = ["Barcode03", "Barcode04"] # optional
+barcode_weights = [1,2] # Optional
+uneven = false # Optional
