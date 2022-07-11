@@ -85,7 +85,8 @@ These can be install with `apt-get install`.
 
 `sudo apt-get install libcunit1 libcunit1-dev libhdf5 libhdf5-dev libopenblas-base libopenblas-dev`
 
-Now that you have all the packages required, in the python directory -
+Now that you have all the packages required, change into the python directory and create the environment -
+
 
 ```zsh
 cd python
