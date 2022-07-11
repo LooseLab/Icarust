@@ -406,7 +406,6 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
 
 fn start_unblock_thread(
     channel_read_info: Arc<Mutex<Vec<ReadInfo>>>,
-    _complete_read_tx: SyncSender<ReadInfo>,
 ) -> SyncSender<GetLiveReadsRequest> {
     let (tx, rx): (
         SyncSender<GetLiveReadsRequest>,
@@ -423,7 +422,7 @@ fn start_unblock_thread(
             let (_setup_proc, unblock_proc, stop_rec_proc) = match request_type {
                 // set up request
                 get_live_reads_request::Request::Setup(_) => setup(request_type),
-                // list of actions
+                // list of actions, pas through to take actions
                 get_live_reads_request::Request::Actions(_) => {
                     take_actions(request_type, &channel_read_info, &mut read_numbers_actioned)
                 }
@@ -1011,7 +1010,7 @@ impl DataService for DataServiceServicer {
         let data_lock = Arc::clone(&self.read_data);
         let data_lock_unblock = Arc::clone(&self.read_data);
         let complete_read_tx = self.complete_read_tx.clone();
-        let tx = start_unblock_thread(data_lock_unblock, complete_read_tx);
+        let tx = start_unblock_thread(data_lock_unblock);
         let channel_size = get_channel_size();
         let mut stream_counter = 1;
 
@@ -1019,18 +1018,20 @@ impl DataService for DataServiceServicer {
 
         let output = async_stream::try_stream! {
             let (tx2, mut rx2) = tokio::sync::mpsc::channel(1);
+            // spawn an async thread
             tokio::spawn(async move {
                 while let Some(live_reads_request) = stream.next().await {
                     let now2 = Instant::now();
                     let live_reads_request = live_reads_request.unwrap();
+                    // send all the actions we wish to take to action thread
                     tx.send(live_reads_request).unwrap();
                     stream_counter += 1
                 }
             });
+            // spawn an async thread
             tokio::spawn(async move {
                 loop{
                     let now2 = Instant::now();
-
                     let mut container: Vec<(usize, ReadData)> = Vec::with_capacity(3000);
                     let size = channel_size as f64 / 24_f64;
                     let size = size.ceil() as usize;
@@ -1039,15 +1040,17 @@ impl DataService for DataServiceServicer {
                     let mut num_channels_empty: usize = 0;
                     // magic splitting into 24 reads using a drain like wow magic
                     let mut loop_for_data: bool = true;
+                    let channel_size = get_channel_size();
+                    // don't return empty channels dict so we loop until we have something to return.
+                    // This shouldn't be an issue unless debugging with one channel.
                     while loop_for_data {
+                        // get the channel data vec
                         let mut z2 = {
                             debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
-                            // send all the actions we wish to take and send them
                             let mut z1 = data_lock.lock().unwrap();
                             debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
                             z1
                         };
-                        let channel_size = get_channel_size();
                         for i in 0..channel_size {
                             let mut read_info = z2.get_mut(i).unwrap();
                             debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
@@ -1057,21 +1060,20 @@ impl DataService for DataServiceServicer {
                             if read_info.stop_receiving {
                                 num_reads_stop_receiving += 1;
                             }
-                            // info!("Read is {:#?}", read_info);
                             if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
-                                // don't overslice our read
+                                // work out where to start and stop our slice of signal
                                 let start = read_info.prev_chunk_start;
                                 let now_time = Utc::now();
                                 let prev_time = read_info.start_time_utc;
                                 let elapsed_time = now_time.time() - prev_time.time();
                                 let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                                // slice of signal is too short
                                 if start > stop || (stop - start) < 1600 {
                                     continue
                                 }
-                                // donm't overslice our read
+                                // don't overslice the read by going off the end
                                 let stop = min(stop, read_info.read.len());
                                 read_info.time_accessed = now_time;
-                                // info!("Read is this long {} - {}  which is {} samples", start, stop, stop -start);
                                 read_info.prev_chunk_start = stop;
                                 let read_chunk = read_info.read[start..stop].to_vec();
                                 container.push((read_info.channel, ReadData{
@@ -1089,7 +1091,6 @@ impl DataService for DataServiceServicer {
                             }
                         }
                         mem::drop(z2);
-                        // info!("Dropped GRPC lock {:#?}", now2.elapsed().as_millis());
                         if container.len() > 0 {
                             info!("Breaking out");
                             loop_for_data = false;
@@ -1112,7 +1113,6 @@ impl DataService for DataServiceServicer {
                         channel_data.clear();
                     }
                     container.clear();
-                    // info!("replying {:#?}", now2.elapsed().as_millis());
                     thread::sleep(Duration::from_millis(200));
                 }
 
