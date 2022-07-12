@@ -227,7 +227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let insta_svc = InstanceServiceServer::new(Instance {});
     let anal_svc = AnalysisConfigurationServiceServer::new(Analysis {});
     let devi_svc = DeviceServiceServer::new(Device {});
-    let acquisition_svc = AcquisitionServiceServer::new(Acquisition {});
+    let acquisition_svc = AcquisitionServiceServer::new(Acquisition {run_id: run_id.clone()});
     let protocol_svc = ProtocolServiceServer::new(Protocol {});
     let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id, args));
 

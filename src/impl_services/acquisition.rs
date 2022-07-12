@@ -14,14 +14,16 @@ use crate::services::minknow_api::acquisition::acquisition_service_server::Acqui
 use crate::services::minknow_api::acquisition::get_progress_response::RawPerChannel;
 use crate::services::minknow_api::acquisition::{
     AcquisitionRunInfo, CurrentStatusRequest, CurrentStatusResponse, GetProgressRequest,
-    GetProgressResponse, WatchCurrentAcquisitionRunRequest,
+    GetProgressResponse, WatchCurrentAcquisitionRunRequest, GetCurrentAcquisitionRunRequest,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
-pub struct Acquisition {}
+pub struct Acquisition {
+    pub run_id: String
+}
 
 #[tonic::async_trait]
 impl AcquisitionService for Acquisition {
@@ -51,6 +53,28 @@ impl AcquisitionService for Acquisition {
             tx.send(Ok(acquisition_run_info.clone())).await.unwrap();
         });
         Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn get_current_acquisition_run(
+        &self,
+        _request: Request<GetCurrentAcquisitionRunRequest>
+    ) -> Result<Response<AcquisitionRunInfo>, Status> {
+        Ok(Response::new(AcquisitionRunInfo {
+            run_id: self.run_id.clone(),
+            startup_state: 0,
+            startup_state_estimated_end: None,
+            startup_state_estimated_percent_complete: 0.0,
+            state: 0,
+            finishing_state: 0,
+            stop_reason: 0,
+            start_time: None,
+            data_read_start_time: None,
+            data_read_end_time: None,
+            end_time: None,
+            yield_summary: None,
+            config_summary: None,
+            writer_summary: None,
+        }))
     }
 
     async fn current_status(
