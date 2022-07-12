@@ -16,7 +16,7 @@ In order to run Icarust with the pre set config and squiggle -
 ```zsh
 git clone https://github.com/Adoni5/Icarust
 cd Icarust
-cargo run --release -- --Profile_tomls/config.toml
+cargo run --release -- --Profile_tomls/config.toml -v
 ```
 
 ## Changing Configured settings
