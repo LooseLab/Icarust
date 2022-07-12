@@ -11,7 +11,8 @@ dependencies:
       - grpcio-tools
       - h5py==3.6.0
       - numpy==1.22.2
-      - pyfastx
+      - mappy
       - rich
       - git+https://github.com/alexomics/scrappie#subdirectory=python
-      - tqdm
+      - pandas
+      - scipy
