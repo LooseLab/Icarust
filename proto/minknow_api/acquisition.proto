@@ -33,6 +33,15 @@ service AcquisitionService {
     rpc get_progress (GetProgressRequest) returns (GetProgressResponse) {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
+        // Returns the name and run id of the currently running acquisition.
+    //
+    // Will fail with FAILED_PRECONDITION if there is no acquisition running
+    //
+    // Since 1.11
+    rpc get_current_acquisition_run (GetCurrentAcquisitionRunRequest) returns (AcquisitionRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
 }
 
 //
