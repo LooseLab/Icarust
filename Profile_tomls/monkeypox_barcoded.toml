@@ -1,0 +1,20 @@
+output_path = "/tmp/"
+random_seed = 10
+
+[parameters]
+sample_name = "test"
+experiment_name = "test_mpv"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "FenceSitter"
+
+[[sample]]
+name = "MonkeyPox"
+weight = 1
+input_genome = "squiggle_arrs/monkeypox_barcoded/"
+mean_read_length = 20000
+amplicon = true
+barcodes = ["Barcode01", "Barcode02", "Barcode03"]
+barcode_weights = [1, 2, 3]
+uneven = true
