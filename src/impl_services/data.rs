@@ -520,11 +520,11 @@ fn unblock_reads(
     if let action::Read::Number(read_num) = read_number {
         // check if the last read_num we performed an action on isn't this one, on this channel
         if channel_num_to_read_num[channel_number] == read_num {
-            info!("Ignoring second unblock! on read {}", read_num);
+            // Debug!("Ignoring second unblock! on read {}", read_num);
             return (None, 0, 0);
         }
         if read_num != value.read_number {
-            info!("Ignoring unblock for old read");
+            // Debug!("Ignoring unblock for old read");
             return (None, 0, 0);
         }
         // if we are dealing with a new read, set the new read num as the last dealt with read num ath this channel number
@@ -900,7 +900,8 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
+    pub fn 
+    new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
         let channel_size = get_channel_size();
@@ -1092,7 +1093,7 @@ impl DataService for DataServiceServicer {
                         }
                         mem::drop(z2);
                         if container.len() > 0 {
-                            info!("Breaking out");
+                            debug!("Breaking out of data gathering loop");
                             loop_for_data = false;
                         }
 
