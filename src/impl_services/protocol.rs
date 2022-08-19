@@ -36,6 +36,7 @@ impl ProtocolService for Protocol {
             meta_info: None,
             associated_post_processing_analysis: Vec::new(),
             pqc_result: None,
+            external_offload: None,
         }))
     }
 }

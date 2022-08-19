@@ -100,7 +100,7 @@ struct SampleInfo {
     read_len_gamma: Gamma<f64>,
     files: Vec<FileInfo>,
     is_amplicon: bool,
-    is_barcoded:bool,
+    is_barcoded: bool,
     file_weights: Vec<WeightedIndex<usize>>,
 }
 
@@ -111,7 +111,7 @@ impl SampleInfo {
         uneven: Option<bool>,
         is_amplicon: bool,
         is_barcoded: bool,
-        read_len_gamma: Gamma<f64>
+        read_len_gamma: Gamma<f64>,
     ) -> SampleInfo {
         SampleInfo {
             name,
@@ -621,9 +621,7 @@ fn process_samples_from_config(
             // if the sample is an amplicon based sample we want to get the relative distributions
             let sample_info = views.get_mut(&sample.name).unwrap();
 
-            let distributions: Vec<WeightedIndex<usize>> = match &sample
-                .weights_files
-            {
+            let distributions: Vec<WeightedIndex<usize>> = match &sample.weights_files {
                 Some(_) => read_sample_distribution_files(sample),
                 // generate amplicon distributions for each barcode
                 None => {
@@ -631,8 +629,7 @@ fn process_samples_from_config(
                     let mut file_distributions = vec![];
                     if let Some(barcodes) = &sample.barcodes {
                         for _barcode in barcodes.iter() {
-                            let disty =
-                                generate_file_sampling_distribution(num_files, &mut rng);
+                            let disty = generate_file_sampling_distribution(num_files, &mut rng);
                             file_distributions.push(disty);
                         }
                     } else {
@@ -653,7 +650,7 @@ fn process_samples_from_config(
                 ));
                 sample_info.barcode_weights = barcode_dists;
             }
-        // only a path to a single file has been passed 
+        // only a path to a single file has been passed
         } else {
             read_views_of_data(
                 &mut views,
@@ -775,14 +772,16 @@ fn read_views_of_data(
         .unwrap();
     let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
     let file_info = FileInfo::new(size, view.to_owned());
-    let sample = views.entry(sample_info.name.clone()).or_insert(SampleInfo::new(
-        sample_info.name.clone(),
-        sample_info.barcodes.clone(),
-        sample_info.uneven,
-        sample_info.is_amplicon(),
-        sample_info.is_barcoded(),
-        read_gamma
-    ));
+    let sample = views
+        .entry(sample_info.name.clone())
+        .or_insert(SampleInfo::new(
+            sample_info.name.clone(),
+            sample_info.barcodes.clone(),
+            sample_info.uneven,
+            sample_info.is_amplicon(),
+            sample_info.is_barcoded(),
+            read_gamma,
+        ));
     sample.files.push(file_info)
 }
 
@@ -862,10 +861,26 @@ fn generate_read(
     if sample_info.is_barcoded {
         // this is analagous to the choice of the barcode as well - the file weights are in vec with one weight per barcode
         file_weight_choice = sample_info.barcode_weights.as_ref().unwrap().sample(rng);
-        barcode = Some(sample_info.barcodes.as_ref().unwrap().get(file_weight_choice).unwrap())
+        barcode = Some(
+            sample_info
+                .barcodes
+                .as_ref()
+                .unwrap()
+                .get(file_weight_choice)
+                .unwrap(),
+        )
     }
     // need to choose a file at this point
-    let file_info = sample_info.files.get(sample_info.file_weights.get(file_weight_choice).unwrap().sample(rng)).unwrap();
+    let file_info = sample_info
+        .files
+        .get(
+            sample_info
+                .file_weights
+                .get(file_weight_choice)
+                .unwrap()
+                .sample(rng),
+        )
+        .unwrap();
     // start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {
         true => 0,
@@ -879,7 +894,6 @@ fn generate_read(
     let mut base_squiggle = file_info.view.slice(s![start..end]).to_vec();
     // Barcode name has been provided for this sample
     if sample_info.is_barcoded {
-        
         let (mut barcode_1_squig, mut barcode_2_squig) =
             barcode_squig.get(barcode.unwrap()).unwrap().clone();
         base_squiggle.append(&mut barcode_2_squig);
@@ -900,8 +914,7 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn 
-    new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
+    pub fn new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
         let channel_size = get_channel_size();

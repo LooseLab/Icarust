@@ -20,17 +20,14 @@ impl InstanceService for Instance {
         _request: Request<instance::GetVersionInfoRequest>,
     ) -> Result<Response<instance::GetVersionInfoResponse>, Status> {
         Ok(Response::new(instance::GetVersionInfoResponse {
-            minknow: Some(MinknowVersion {
-                major: 4,
-                minor: 0,
-                patch: 0,
-                full: "4.0.0".to_string(),
-            }),
-            protocols: "0.0.0.0".to_string(),
-            distribution_version: "unknown".to_string(),
-            distribution_status: 0,
-            configuration: "0.0.0.0".to_string(),
-            installation_type: 0,
-        }))
+            minknow:Some(MinknowVersion{major:5,minor:1,patch:4,full:"5.1.4".to_string(),}),
+            distribution_version:"unknown".to_string(),
+            distribution_status:0,
+            installation_type:0, 
+            bream: String::from("Bream me up scotty"), 
+            protocol_configuration: String::from("0.0.0.0"), 
+            guppy_build_version: String::from("Build me guppy"), 
+            guppy_connected_version: String::from("6hopefully") })
+        )
     }
 }

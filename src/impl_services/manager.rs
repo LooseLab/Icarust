@@ -5,15 +5,13 @@
 //! 3. flow_cell positions
 //!
 
-use crate::services::minknow_api::manager::manager_service_server::ManagerService;
-use crate::services::minknow_api::manager::{
-    DescribeHostRequest, DescribeHostResponse, GetVersionInfoRequest,
-};
-use crate::services::minknow_api::manager::{
-    FlowCellPosition, FlowCellPositionsRequest, FlowCellPositionsResponse, GetVersionInfoResponse,
-};
-// use manager::get_version_info_response::InstallationType;
 use crate::services::minknow_api::instance::get_version_info_response::MinknowVersion;
+use crate::services::minknow_api::instance::GetVersionInfoResponse;
+use crate::services::minknow_api::manager::manager_service_server::ManagerService;
+use crate::services::minknow_api::manager::{DescribeHostRequest, DescribeHostResponse};
+use crate::services::minknow_api::manager::{
+    FlowCellPosition, FlowCellPositionsRequest, FlowCellPositionsResponse, GetVersionInfoRequest,
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -31,20 +29,15 @@ impl ManagerService for Manager {
         _request: Request<GetVersionInfoRequest>,
     ) -> Result<Response<GetVersionInfoResponse>, Status> {
         Ok(Response::new(GetVersionInfoResponse {
-            minknow: Some(MinknowVersion {
-                major: 5,
-                minor: 0,
-                patch: 0,
-                full: "5.0.0".to_string(),
-            }),
-            protocols: "0.0.0.0".to_string(),
-            distribution_version: "unknown".to_string(),
-            distribution_status: 0,
-            guppy_build_version: "banter".to_string(),
-            guppy_connected_version: "5.0.0".to_string(),
-            configuration: "0.0.0.0".to_string(),
-            installation_type: 0,
-        }))
+            minknow:Some(MinknowVersion{major:5,minor:1,patch:4,full:"5.1.4".to_string(),}),
+            distribution_version:"unknown".to_string(),
+            distribution_status:0,
+            installation_type:0, 
+            bream: String::from("Bream me up scotty"), 
+            protocol_configuration: String::from("0.0.0.0"), 
+            guppy_build_version: String::from("Build me guppy"), 
+            guppy_connected_version: String::from("6hopefully") })
+        )
     }
 
     async fn describe_host(

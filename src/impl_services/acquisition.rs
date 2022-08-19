@@ -13,8 +13,9 @@
 use crate::services::minknow_api::acquisition::acquisition_service_server::AcquisitionService;
 use crate::services::minknow_api::acquisition::get_progress_response::RawPerChannel;
 use crate::services::minknow_api::acquisition::{
-    AcquisitionRunInfo, CurrentStatusRequest, CurrentStatusResponse, GetProgressRequest,
-    GetProgressResponse, WatchCurrentAcquisitionRunRequest, GetCurrentAcquisitionRunRequest,
+    AcquisitionRunInfo, CurrentStatusRequest, CurrentStatusResponse,
+    GetCurrentAcquisitionRunRequest, GetProgressRequest, GetProgressResponse,
+    WatchCurrentAcquisitionRunRequest,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -22,7 +23,7 @@ use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub struct Acquisition {
-    pub run_id: String
+    pub run_id: String,
 }
 
 #[tonic::async_trait]
@@ -48,6 +49,7 @@ impl AcquisitionService for Acquisition {
             yield_summary: None,
             config_summary: None,
             writer_summary: None,
+            bream_info: None,
         };
         tokio::spawn(async move {
             tx.send(Ok(acquisition_run_info.clone())).await.unwrap();
@@ -57,7 +59,7 @@ impl AcquisitionService for Acquisition {
 
     async fn get_current_acquisition_run(
         &self,
-        _request: Request<GetCurrentAcquisitionRunRequest>
+        _request: Request<GetCurrentAcquisitionRunRequest>,
     ) -> Result<Response<AcquisitionRunInfo>, Status> {
         Ok(Response::new(AcquisitionRunInfo {
             run_id: self.run_id.clone(),
@@ -74,6 +76,7 @@ impl AcquisitionService for Acquisition {
             yield_summary: None,
             config_summary: None,
             writer_summary: None,
+            bream_info: None,
         }))
     }
 
