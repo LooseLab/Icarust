@@ -27,7 +27,7 @@ use chrono::Duration;
 use clap::Parser;
 use rand_distr::Gamma;
 use serde::Deserialize;
-use tonic::transport::{Server, ServerTlsConfig, Identity};
+use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 use uuid::Uuid;
 
 
@@ -193,11 +193,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = _load_toml(&args.config);
     config.check_fields();
     info!("{:#?}", config);
+    info!("HElol");
 
-    let cert = std::fs::read_to_string("tls/server.crt")?;
-    let key = std::fs::read_to_string("tls/server.key")?;
+    let cert =  tokio::fs::read("tls/rpc-certs/localhost.crt").await?;
+    let key = tokio::fs::read("tls/rpc-certs/localhost.key").await?;
+    let server_identity = Identity::from_pem(cert, key);
+    info!("HElol2");
 
-    let addr_manager = "127.0.0.1:10000".parse().unwrap();
+    let client_ca_cert = tokio::fs::read("tls/rpc-certs/ca.crt").await?;
+    let client_ca_cert = Certificate::from_pem(client_ca_cert);
+    info!("HElol");
+    
+    let tls = ServerTlsConfig::new()
+        .identity(server_identity);
+    let tls_position = tls.clone();
+
+    let addr_manager = "[::0]:10000".parse().unwrap();
     let addr_position: SocketAddr = "127.0.0.1:10001".parse().unwrap();
     let run_id = Uuid::new_v4().to_string().replace('-', "");
 
@@ -210,11 +221,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 secure_grpc_web: 420
             }),
             protocol_state: 1,
-            location: Some(Location { x: 1, y: 1 }),
             error_info: "Unknown state, please help".to_string(),
             shared_hardware_group: Some(SharedHardwareGroup { group_id: 1 }),
             is_integrated: true,
             can_sequence_offline: true,
+            location: None
         }],
     };
 
@@ -223,8 +234,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Spawn an Async thread and send it off somewhere
     tokio::spawn(async move {
         Server::builder()
-            .tls_config(ServerTlsConfig::new()
-            .identity(Identity::from_pem(&cert, &key))).unwrap()
+            .tls_config(tls).unwrap()
             .concurrency_limit_per_connection(256)
             .add_service(svc)
             .serve(addr_manager)
@@ -241,21 +251,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let protocol_svc = ProtocolServiceServer::new(Protocol {});
     // let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id, args));
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-    }
-    // Server::builder()
-    //     .tls_config(ServerTlsConfig::new()
-    //     .identity(Identity::from_pem(&cert, &key)))?
-    //     .concurrency_limit_per_connection(256)
+
+    Server::builder()
+        .tls_config(tls_position).unwrap()
+        .concurrency_limit_per_connection(256)
     //     .add_service(log_svc)
-    //     .add_service(devi_svc)
-    //     .add_service(insta_svc)
+        .add_service(devi_svc)
+        .add_service(insta_svc)
     //     .add_service(anal_svc)
     //     .add_service(acquisition_svc)
     //     .add_service(protocol_svc)
     //     .add_service(data_svc)
-    //     .serve(addr_position)
-    //     .await?;
+        .serve(addr_position)
+        .await?;
+    loop {
+        std::thread::sleep(std::time::Duration::from_millis(1000));
+    }
     Ok(())
 }
