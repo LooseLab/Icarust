@@ -187,31 +187,30 @@ fn _load_toml(file_path: &std::path::PathBuf) -> Config {
 /// sequencing position.
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Parse the arguments from the command line
     let args = cli::Cli::parse();
     args.set_logging();
     args.check_config_exists();
+    // Parse the config to load all the samples 
     let config = _load_toml(&args.config);
     config.check_fields();
-    info!("{:#?}", config);
-    info!("HElol");
-
+    // Setup the TLS certifcates using the Minknow TLS certs
     let cert =  tokio::fs::read("tls/rpc-certs/localhost.crt").await?;
     let key = tokio::fs::read("tls/rpc-certs/localhost.key").await?;
     let server_identity = Identity::from_pem(cert, key);
-    info!("HElol2");
-
     let client_ca_cert = tokio::fs::read("tls/rpc-certs/ca.crt").await?;
     let client_ca_cert = Certificate::from_pem(client_ca_cert);
-    info!("HElol");
-    
     let tls = ServerTlsConfig::new()
         .identity(server_identity);
     let tls_position = tls.clone();
 
+    // Set the positions that we will be serving on
     let addr_manager = "[::0]:10000".parse().unwrap();
-    let addr_position: SocketAddr = "127.0.0.1:10001".parse().unwrap();
+    let addr_position: SocketAddr = "[::0]:10001".parse().unwrap();
+    // Randomly generate a run id
     let run_id = Uuid::new_v4().to_string().replace('-', "");
 
+    // Create the manager server and add the service to it
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
             name: config.parameters.device_id,
@@ -228,8 +227,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             location: None
         }],
     };
-
-    // Create the manager server and add the ervice to it
     let svc = ManagerServiceServer::new(manager_init);
     // Spawn an Async thread and send it off somewhere
     tokio::spawn(async move {
@@ -243,9 +240,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     // Create the position server for our one position.
     let log_svc = LogServiceServer::new(Log {});
-    let insta_svc = InstanceServiceServer::new(Instance {});
-    let anal_svc = AnalysisConfigurationServiceServer::new(Analysis {});
-    let devi_svc = DeviceServiceServer::new(Device {});
+    let instance_svc = InstanceServiceServer::new(Instance {});
+    let analysis_svc = AnalysisConfigurationServiceServer::new(Analysis {});
+    let device_svc = DeviceServiceServer::new(Device {});
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {
         run_id: run_id.clone(),
     });
@@ -256,9 +253,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .tls_config(tls_position).unwrap()
         .concurrency_limit_per_connection(256)
     //     .add_service(log_svc)
-        .add_service(devi_svc)
-        .add_service(insta_svc)
-    //     .add_service(anal_svc)
+        .add_service(device_svc)
+        .add_service(instance_svc)
+    //     .add_service(analysis_svc)
     //     .add_service(acquisition_svc)
     //     .add_service(protocol_svc)
     //     .add_service(data_svc)
