@@ -141,13 +141,10 @@ impl RunSetup {
 #[derive(Debug)]
 pub struct DataServiceServicer {
     read_data: Arc<Mutex<Vec<ReadInfo>>>,
-    complete_read_tx: SyncSender<ReadInfo>,
     // to be implemented
     action_responses: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
-    // also can now be implemented
-    setup: Arc<Mutex<bool>>,
-    read_count: usize,
-    processed_actions: usize,
+    setup: Arc<Mutex< RunSetup>>,
+    break_chunks_ms: u64
 }
 
 #[derive(Debug, Deserialize)]
@@ -176,6 +173,9 @@ struct ReadInfo {
     duration: usize,
     time_accessed: DateTime<Utc>,
     time_unblocked: DateTime<Utc>,
+    dead: bool,
+    last_read_len: u64
+
 }
 
 impl fmt::Debug for ReadInfo {
@@ -406,6 +406,7 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
 
 fn start_unblock_thread(
     channel_read_info: Arc<Mutex<Vec<ReadInfo>>>,
+    run_setup: Arc<Mutex<RunSetup>>,
 ) -> SyncSender<GetLiveReadsRequest> {
     let (tx, rx): (
         SyncSender<GetLiveReadsRequest>,
@@ -421,7 +422,7 @@ fn start_unblock_thread(
             // match whether we have actions or a setup
             let (_setup_proc, unblock_proc, stop_rec_proc) = match request_type {
                 // set up request
-                get_live_reads_request::Request::Setup(_) => setup(request_type),
+                get_live_reads_request::Request::Setup(_) => setup(request_type, run_setup.clone()),
                 // list of actions, pas through to take actions
                 get_live_reads_request::Request::Actions(_) => {
                     take_actions(request_type, &channel_read_info, &mut read_numbers_actioned)
@@ -441,9 +442,15 @@ fn start_unblock_thread(
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no
 /// effect on the run itself, but could be implemented to do so in the future if required.
-fn setup(setuppy: get_live_reads_request::Request) -> (usize, usize, usize) {
+fn setup(setuppy: get_live_reads_request::Request, setup_arc: Arc<Mutex<RunSetup>>) -> (usize, usize, usize) {
+    let mut setup = setup_arc.lock().unwrap();
     info!("Received stream setup, setting up.");
-    if let get_live_reads_request::Request::Setup(_h) = setuppy {}
+    if let get_live_reads_request::Request::Setup(_h) = setuppy {
+        setup.first = _h.first_channel;
+        setup.last = _h.last_channel;
+        setup.dtype = _h.raw_data_type;
+        setup.setup = true;
+    }
     // return we have prcessed 1 action
     (1, 0, 0)
 }
@@ -701,7 +708,7 @@ fn generate_file_sampling_distribution(
 ) -> WeightedIndex<usize> {
     let mut distribution: Vec<usize> = vec![];
     let skew_normal: SkewNormal<f64> = SkewNormal::new(7.0, 2.0, 1.0).unwrap();
-    for i in 0..num_amplicons {
+    for _ in 0..num_amplicons {
         distribution.push(skew_normal.sample(randay).ceil() as usize);
     }
     WeightedIndex::new(&distribution).unwrap()
@@ -764,12 +771,6 @@ fn read_views_of_data(
     let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
         ArrayView1::<i16>::view_npy(&mmap).unwrap();
     let size = view.shape()[0];
-    let file_name: String = file_info
-        .file_name()
-        .unwrap()
-        .to_os_string()
-        .into_string()
-        .unwrap();
     let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
     let file_info = FileInfo::new(size, view.to_owned());
     let sample = views
@@ -824,6 +825,8 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             duration: 0,
             time_accessed: Utc::now(),
             time_unblocked: Utc::now(),
+            dead: false,
+            last_read_len: 0
         };
         num.push(read_info);
     }
@@ -881,7 +884,7 @@ fn generate_read(
                 .sample(rng),
         )
         .unwrap();
-    // start point in file, match is for amplicons so we don't start halfway through
+    // earliest possible start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {
         true => 0,
         false => rng.gen_range(0..file_info.contig_len - 1000) as usize,
@@ -904,6 +907,8 @@ fn generate_read(
     value.read.append(&mut base_squiggle);
     // set estimated duration in seconds
     value.duration = value.read.len() / 4000;
+    // set the read len for channel death chance
+    value.last_read_len = value.read.len() as u64;
 
     let read_id = Uuid::new_v4().to_string();
     value.read_id = read_id;
@@ -917,6 +922,7 @@ impl DataServiceServicer {
     pub fn new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
+        let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
         let channel_size = get_channel_size();
         let start_time: u64 = Utc::now().timestamp() as u64;
         let barcode_squig = create_barcode_squig_hashmap(&config);
@@ -927,41 +933,40 @@ impl DataServiceServicer {
             Arc::new(Mutex::new(Vec::with_capacity(channel_size)));
         let _thread_safe_responses = Arc::clone(&action_response_safe);
         let thread_safe = Arc::clone(&safe);
-        let is_setup = Arc::new(Mutex::new(false));
+        let run_setup = RunSetup::new();
+        let is_setup = Arc::new(Mutex::new(run_setup));
         let is_safe_setup = Arc::clone(&is_setup);
 
-        // let dist = read_species_distribution(&config);
         let (views, dist) = process_samples_from_config(&config);
         let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
         let complete_read_tx = start_write_out_thread(run_id, cli_opts);
-        let complete_read_tx_2 = complete_read_tx.clone();
 
         // start the thread to generate data
         thread::spawn(move || {
-            let mut rng = rand::SeedableRng::seed_from_u64(1234567);
+            let mut rng: StdRng = rand::SeedableRng::seed_from_u64(1234567);
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
             setup_channel_vec(channel_size, &thread_safe);
 
-            // If we have a global mean read_length set up a gamma distribution for it
-
+            // Infinte loop for data generation
             loop {
                 debug!("Sequencer mock loop start");
 
                 let start = now.elapsed().as_millis();
-                thread::sleep(Duration::from_millis(400));
+                // sleep the length of the milliseconds chunk size
+                thread::sleep(Duration::from_millis(config.parameters.get_chunk_size_ms()));
 
                 // get some basic stats about what is going on at each channel
                 let _channels_with_reads = 0;
-                // let read_chunks_counts = [0; 10];
-                let mut reads_incremented = 0;
-                let mut reads_generated = 0;
                 let channel_size = get_channel_size();
                 let mut num = thread_safe.lock().unwrap();
 
                 for i in 0..channel_size {
                     let value = num.get_mut(i).unwrap();
+                    if value.dead {
+                        continue;
+                    }
                     let read_estimated_finish_time =
                         value.start_time_seconds as usize + value.duration;
                     // experiment_time is the time the experimanet has started until now
@@ -976,10 +981,10 @@ impl DataServiceServicer {
                         value.was_unblocked = false;
                         // Could be a slow problem here?
                         value.write_out = false;
+                        value.dead = rng.gen_bool(0.025 + 0.025 * (value.last_read_len as f64 / 1e5));
                         // chance to aquire a read
-                        if rand::thread_rng().gen_bool(0.99) {
+                        if rng.gen_bool(0.05) {
                             read_number += 1;
-                            reads_generated += 1;
                             generate_read(
                                 &files,
                                 value,
@@ -991,22 +996,17 @@ impl DataServiceServicer {
                                 &barcode_squig,
                             )
                         }
-                    } else if !value.read.is_empty() && !value.was_unblocked {
-                        reads_incremented += 1;
-                    }
+                    } 
                 }
-                // info!("Reaads_newly created {reads_generated}, Reads inc. {reads_incremented} ");
                 let _end = now.elapsed().as_millis() - start;
             }
         });
         // return our newly initialised DataServiceServicer to add onto the GRPC server
         DataServiceServicer {
             read_data: safe,
-            complete_read_tx: complete_read_tx_2,
             action_responses: action_response_safe,
-            read_count: 0,
-            processed_actions: 0,
             setup: is_safe_setup,
+            break_chunks_ms
         }
     }
 }
@@ -1020,60 +1020,66 @@ impl DataService for DataServiceServicer {
         &self,
         _request: Request<tonic::Streaming<GetLiveReadsRequest>>,
     ) -> Result<Response<Self::get_live_readsStream>, Status> {
+        // Incoming stream
         let mut stream = _request.into_inner();
+        // Get a reference to the Data Vec
         let data_lock = Arc::clone(&self.read_data);
         let data_lock_unblock = Arc::clone(&self.read_data);
-        let complete_read_tx = self.complete_read_tx.clone();
-        let tx = start_unblock_thread(data_lock_unblock);
+        let setup = Arc::clone(&self.setup.clone());
+        let tx_unblocks = {
+            let tx_unblocks = start_unblock_thread(data_lock_unblock, setup);
+            tx_unblocks
+        };
         let channel_size = get_channel_size();
         let mut stream_counter = 1;
-
-        // let is_setup = self.setup.lock().unwrap().clone();
-
+        let break_chunk_ms = &self.break_chunks_ms.clone();
+        let chunk_size = break_chunk_ms / 1000 * 4000;
+        // Stream the responses back
         let output = async_stream::try_stream! {
-            let (tx2, mut rx2) = tokio::sync::mpsc::channel(1);
-            // spawn an async thread
+            // Async channel that will await when it ahs one elemnt. This pushes the read response back immediately.
+            let (tx_get_live_reads_response, mut rx_get_live_reads_response) = tokio::sync::mpsc::channel(1);
+            // spawn an async thread that handles the incoming Get Live Reads Requests.
+            //  This is spawned after we receive our first connection.
             tokio::spawn(async move {
                 while let Some(live_reads_request) = stream.next().await {
                     let now2 = Instant::now();
                     let live_reads_request = live_reads_request.unwrap();
                     // send all the actions we wish to take to action thread
-                    tx.send(live_reads_request).unwrap();
+                    tx_unblocks.send(live_reads_request).unwrap();
                     stream_counter += 1
                 }
             });
-            // spawn an async thread
+            // spawn an async thread that will get the read data from the data generation thread and return it.
             tokio::spawn(async move {
                 loop{
                     let now2 = Instant::now();
-                    let mut container: Vec<(usize, ReadData)> = Vec::with_capacity(3000);
+                    let mut container: Vec<(usize, ReadData)> = Vec::with_capacity(get_channel_size());
+                    // Number of chunks that we will send back
                     let size = channel_size as f64 / 24_f64;
                     let size = size.ceil() as usize;
                     let mut channel: u32 = 1;
                     let mut num_reads_stop_receiving: usize = 0;
                     let mut num_channels_empty: usize = 0;
                     // magic splitting into 24 reads using a drain like wow magic
-                    let mut loop_for_data: bool = true;
                     let channel_size = get_channel_size();
-                    // don't return empty channels dict so we loop until we have something to return.
-                    // This shouldn't be an issue unless debugging with one channel.
-                    while loop_for_data {
+
+                    // calculate number of samples to slice - roughly the time we break reads * 4000, so for the default 0.4 seconds
+                    // we serve 0.4 * 4000 (1600) samples
+                   
+                    // The below code block allows us to Send the responses across an await.
+                    {
                         // get the channel data vec
-                        let mut z2 = {
+                        // The below code block allows us to unlock a syncronous Arc Mutex across an asyncronous await.
+                        let mut read_data_vec = {
                             debug!("Getting GRPC lock {:#?}", now2.elapsed().as_millis());
                             let mut z1 = data_lock.lock().unwrap();
                             debug!("Got GRPC lock {:#?}", now2.elapsed().as_millis());
                             z1
                         };
+                        // Iterate over each channel
                         for i in 0..channel_size {
-                            let mut read_info = z2.get_mut(i).unwrap();
+                            let mut read_info = read_data_vec.get_mut(i).unwrap();
                             debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
-                            if read_info.read.len() == 0 {
-                                num_channels_empty += 1;
-                            }
-                            if read_info.stop_receiving {
-                                num_reads_stop_receiving += 1;
-                            }
                             if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
                                 // work out where to start and stop our slice of signal
                                 let start = read_info.prev_chunk_start;
@@ -1082,7 +1088,7 @@ impl DataService for DataServiceServicer {
                                 let elapsed_time = now_time.time() - prev_time.time();
                                 let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
                                 // slice of signal is too short
-                                if start > stop || (stop - start) < 1600 {
+                                if start > stop || (stop - start) < chunk_size as usize {
                                     continue
                                 }
                                 // don't overslice the read by going off the end
@@ -1104,21 +1110,17 @@ impl DataService for DataServiceServicer {
 
                             }
                         }
-                        mem::drop(z2);
-                        if container.len() > 0 {
-                            debug!("Breaking out of data gathering loop");
-                            loop_for_data = false;
-                        }
-
-                        // reset channel so we don't over total number of channels whilst spinning for data
+                        // Drop the read data vec to free the lock on it
+                        mem::drop(read_data_vec);
+                    // reset channel so we don't over total number of channels whilst spinning for data
                     }
-
                     let mut channel_data = HashMap::with_capacity(24);
+                    
                     for chunk in container.chunks(24) {
                         for (channel,read_data) in chunk {
                             channel_data.insert(channel.clone() as u32, read_data.clone());
                         }
-                        tx2.send(GetLiveReadsResponse{
+                        tx_get_live_reads_response.send(GetLiveReadsResponse{
                             samples_since_start: 0,
                             seconds_since_start: 0.0,
                             channels: channel_data.clone(),
@@ -1127,11 +1129,11 @@ impl DataService for DataServiceServicer {
                         channel_data.clear();
                     }
                     container.clear();
-                    thread::sleep(Duration::from_millis(200));
+                    thread::sleep(Duration::from_millis(100));
                 }
 
             });
-            while let Some(message) = rx2.recv().await {
+            while let Some(message) = rx_get_live_reads_response.recv().await {
                 yield message
             }
 
