@@ -22,8 +22,6 @@ mod services;
 
 use std::fs;
 use std::net::SocketAddr;
-
-use chrono::Duration;
 use clap::Parser;
 use rand_distr::Gamma;
 use serde::Deserialize;
@@ -47,7 +45,7 @@ use crate::services::minknow_api::device::device_service_server::DeviceServiceSe
 use crate::services::minknow_api::instance::instance_service_server::InstanceServiceServer;
 use crate::services::minknow_api::log::log_service_server::LogServiceServer;
 use crate::services::minknow_api::manager::flow_cell_position::{
-    Location, RpcPorts, SharedHardwareGroup,
+    RpcPorts, SharedHardwareGroup,
 };
 use crate::services::minknow_api::manager::manager_service_server::ManagerServiceServer;
 use crate::services::minknow_api::manager::FlowCellPosition;
@@ -137,6 +135,16 @@ struct Parameters {
     experiment_duration_set: Option<usize>,
     device_id: String,
     position: String,
+    chunk_size_ms: Option<u64>
+}
+
+impl Parameters {
+    pub fn get_chunk_size_ms(&self) -> u64 {
+        match self.chunk_size_ms {
+            Some(ms) => ms,
+            None => 400,
+        }
+    }
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -198,8 +206,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cert =  tokio::fs::read("tls/rpc-certs/localhost.crt").await?;
     let key = tokio::fs::read("tls/rpc-certs/localhost.key").await?;
     let server_identity = Identity::from_pem(cert, key);
-    let client_ca_cert = tokio::fs::read("tls/rpc-certs/ca.crt").await?;
-    let client_ca_cert = Certificate::from_pem(client_ca_cert);
     let tls = ServerTlsConfig::new()
         .identity(server_identity);
     let tls_position = tls.clone();
@@ -247,22 +253,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_id: run_id.clone(),
     });
     let protocol_svc = ProtocolServiceServer::new(Protocol {});
-    // let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id, args));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id, args));
 
     Server::builder()
         .tls_config(tls_position).unwrap()
         .concurrency_limit_per_connection(256)
-    //     .add_service(log_svc)
+        .add_service(log_svc)
         .add_service(device_svc)
         .add_service(instance_svc)
-    //     .add_service(analysis_svc)
-    //     .add_service(acquisition_svc)
-    //     .add_service(protocol_svc)
-    //     .add_service(data_svc)
+        .add_service(analysis_svc)
+        .add_service(acquisition_svc)
+        .add_service(protocol_svc)
+        .add_service(data_svc)
         .serve(addr_position)
         .await?;
-    loop {
-        std::thread::sleep(std::time::Duration::from_millis(1000));
-    }
+
     Ok(())
 }
