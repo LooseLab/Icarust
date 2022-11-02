@@ -88,7 +88,6 @@ These can be install with `apt-get install`.
 Now that you have all the packages required, change into the python directory and create the environment -
 
 
-
 ```zsh
 cd python
 conda env create -f icarust.yaml

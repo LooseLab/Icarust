@@ -59,6 +59,7 @@ impl DeviceService for Device {
             adapter_id: "".to_string(),
             asic_version: "".to_string(),
             temperature_offset_nullable: Some(TemperatureOffsetNullable::TemperatureOffset(0.0)),
+            insertion_script_status: 0
         }))
     }
 }

@@ -36,6 +36,7 @@ service DeviceService {
     }
 }
 
+
 // Describes the configuration of a channel on the device.
 //
 // Note that this is a lossy representation. The device-specific APIs provide more precise
@@ -142,7 +143,7 @@ message GetDeviceInfoResponse {
 
     // Whether the device is simulated.
     //
-    // If this is true, there is no physical device - MinKNOW is simluating it. If it is false,
+    // If this is true, there is no physical device - MinKNOW is simulating it. If it is false,
     // MinKNOW will be acquiring data from a real device.
     bool is_simulated = 3;
 
@@ -229,6 +230,20 @@ message StreamDeviceStateRequest {}
 
 message GetFlowCellInfoRequest {}
 
+enum InsertionScriptStatus {
+    // An insertion script has not been run for a flow-cell. Not all
+    // platforms use an insertion script.
+    NOT_RUN = 0;
+
+    // An insertion script has been run and has failed to complete
+    // successfully. This can indicate a faulty flow-cell or that the flow-cell
+    // has not been inserted correctly.
+    FAILED = 1;
+
+    // Script run successfully, hardware ready to use.
+    SUCCEEDED = 2;
+}
+
 message GetFlowCellInfoResponse {
     // Whether there is a flow cell present.
     //
@@ -304,7 +319,7 @@ message GetFlowCellInfoResponse {
     // provide useful information, even if has_flow_cell is false.
     bool has_adapter = 9;
 
-    // The unique identifier of an attached flongle adatper.
+    // The unique identifier of an attached flongle adapter.
     //
     // This should be same as the value printed onto the adapter casing.
     string adapter_id = 10;
@@ -321,7 +336,7 @@ message GetFlowCellInfoResponse {
         float temperature_offset = 11;
     }
 
-    // The version of the ASIC contained in the flowcell (if specified by the hardware).
+    // The version of the ASIC contained in the flow cell (if specified by the hardware).
     //
     // This can be used to determine if the hardware should support certain features
     // added to only newer ASICs.
@@ -331,6 +346,13 @@ message GetFlowCellInfoResponse {
     //
     // Since 1.14
     string asic_version = 12;
+
+    // If the configuration specifies a script to run when a flow-cell is inserted,
+    // this shows if it completed successfully.
+    //
+    // Since 5.0
+    InsertionScriptStatus insertion_script_status = 14;
+
 }
 
 message StreamFlowCellInfoRequest {}
@@ -634,7 +656,7 @@ message SaturationConfig
     //
     // Each packet of frames minknow receive is delivered to the saturation
     // check (in approx 64 frame chunks), only the first frame of each packet is inspected.
-    // The thresolds control how many _packets_ must be outside the valid range.
+    // The thresholds control how many _packets_ must be outside the valid range.
     // ie. if general_threshold is set to 10, at least 640 frames are
     // required to trigger saturation.
     //
@@ -768,4 +790,10 @@ message SetBiasVoltageRequest {
 
 message SetBiasVoltageResponse {
 
+}
+
+message DumpStateRequest {
+}
+
+message DumpStateResponse {
 }
