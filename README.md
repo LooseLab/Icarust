@@ -11,12 +11,26 @@ Icarust is a work in progress - as such some small bugs are to be expected.
 
 Icarust requires Rust > 1.56. In order to install Rust instructions can be found [here.](https://www.rust-lang.org/tools/install)
 
+
+
+### Dependencies
+
+In order to build `tonic` >= 0.8.0, you need the `protoc` Protocol Buffers compiler, along with Protocol Buffers resource files.
+
+#### Ubuntu
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y protobuf-compiler libprotobuf-dev
+```
+
+
 In order to run Icarust with the pre set config and squiggle - 
 
 ```zsh
 git clone https://github.com/Adoni5/Icarust
 cd Icarust
-cargo run --release -- --Profile_tomls/config.toml -v
+cargo run --release -- -c Profile_tomls/config.toml -v
 ```
 
 ## Changing Configured settings
