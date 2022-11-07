@@ -909,7 +909,6 @@ fn generate_read(
     value.duration = value.read.len() / 4000;
     // set the read len for channel death chance
     value.last_read_len = value.read.len() as u64;
-
     let read_id = Uuid::new_v4().to_string();
     value.read_id = read_id;
     // reset these time based metrics

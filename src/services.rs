@@ -38,9 +38,6 @@ pub mod minknow_api {
     pub(crate) mod protocol {
         tonic::include_proto!("minknow_api.protocol");
     }
-    pub(crate) mod rpc_options {
-        tonic::include_proto!("minknow_api");
-    }
     pub(crate) mod statistics {
         tonic::include_proto!("minknow_api.statistics");
     }
