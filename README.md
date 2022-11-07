@@ -12,8 +12,7 @@ Icarust is a work in progress - as such some small bugs are to be expected.
 Icarust requires Rust > 1.56. In order to install Rust instructions can be found [here.](https://www.rust-lang.org/tools/install)
 
 
-
-### Dependencies
+#### Dependencies
 
 In order to build `tonic` >= 0.8.0, you need the `protoc` Protocol Buffers compiler, along with Protocol Buffers resource files.
 
@@ -23,6 +22,10 @@ In order to build `tonic` >= 0.8.0, you need the `protoc` Protocol Buffers compi
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y protobuf-compiler libprotobuf-dev
 ```
+
+#### TLS
+
+Minknow core 5.x requires a secure channel connection be made by the minknow API. IN order to do this it is neccessary to use the localhost certificates provided with an installed version of minknow. Therefore currently _MinKNOW MUST BE INSTALLED_. The certificates are read from /opt/ont/minnow/conf/rpc-certs/.
 
 
 In order to run Icarust with the pre set config and squiggle - 
