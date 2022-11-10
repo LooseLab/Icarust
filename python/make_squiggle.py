@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Dict, Tuple
 import argparse
+import re
 import time
 
 from mappy import fastx_read
@@ -66,13 +67,26 @@ def progress_bar_setup(total_files: int) -> Tuple[Progress, Progress, Table, Dic
     return job_progress, overall_progress, progress_table, job_dict
 
 def valid_seq(seq):
-    allowed = set(list("ACGTacgt"))
+    """
+    Check if a sequence contains anything other than ACGT
+    Parameters
+    ----------
+    seq: Str
+        sequence from fasta file
+    Returns
+    -------
+    bool
+    """
+    allowed = set(list("ACGT"))
     return set(seq) <= allowed
 
 def replace_characters(seq):
-    allowed = set(list("ACGTacgt"))
-    new_seq = ''.join([i if i in allowed else 'A' for i in seq ])
-    return new_seq
+    """
+        Replace all characters that are not ACGT and return an uppercase sequence.
+    """
+    pat = re.compile(r'([^ACGT]+)')
+    seq = pat.sub("", seq.upper())
+    return seq
 
 def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup: Dict[str, int], skew: int, barcode: Str, bed_file: Path = None) -> None:
     """
@@ -105,7 +119,7 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
     for name, seq, qual in fastx_read(str(path.resolve())):
         logger.info(f"Generating squiggle for {name}")
         if not valid_seq(seq):
-            logger.info(f'Invalid characters found in sequence of {name}, replacing with As')
+            logger.info(f'Invalid characters found in sequence of {name}, removing them')
             seq = replace_characters(seq)
         if args.bed_file is not None:
             logger.info("Bedfile found - parsing and splitting sequence into amplicons...")
