@@ -65,6 +65,15 @@ def progress_bar_setup(total_files: int) -> Tuple[Progress, Progress, Table, Dic
     )
     return job_progress, overall_progress, progress_table, job_dict
 
+def valid_seq(seq):
+    allowed = set(list("ACGTacgt"))
+    return set(seq) <= allowed
+
+def replace_characters(seq):
+    allowed = set(list("ACGTacgt"))
+    new_seq = ''.join([i if i in allowed else 'A' for i in seq ])
+    return new_seq
+
 def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup: Dict[str, int], skew: int, barcode: Str, bed_file: Path = None) -> None:
     """
     Use pyfastx to open a file and feed the sequences in turn to generate_squiggle
@@ -95,6 +104,9 @@ def get_sequence(path: Path, out_dir: Path, job_progress: Progress, task_lookup:
     job_progress.update(task_lookup["contig_job"], total=total_contigs)
     for name, seq, qual in fastx_read(str(path.resolve())):
         logger.info(f"Generating squiggle for {name}")
+        if not valid_seq(seq):
+            logger.info(f'Invalid characters found in sequence of {name}, replacing with As')
+            seq = replace_characters(seq)
         if args.bed_file is not None:
             logger.info("Bedfile found - parsing and splitting sequence into amplicons...")
             coords = collapse_amplicon_start_ends(bed_file)
