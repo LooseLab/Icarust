@@ -143,8 +143,8 @@ pub struct DataServiceServicer {
     read_data: Arc<Mutex<Vec<ReadInfo>>>,
     // to be implemented
     action_responses: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
-    setup: Arc<Mutex< RunSetup>>,
-    break_chunks_ms: u64
+    setup: Arc<Mutex<RunSetup>>,
+    break_chunks_ms: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -174,8 +174,7 @@ struct ReadInfo {
     time_accessed: DateTime<Utc>,
     time_unblocked: DateTime<Utc>,
     dead: bool,
-    last_read_len: u64
-
+    last_read_len: u64,
 }
 
 impl fmt::Debug for ReadInfo {
@@ -250,7 +249,7 @@ fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNp
 }
 
 /// Start the thread that will handle writing out the FAST5 file,
-fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
+fn start_write_out_thread(run_id: String, config: Cli, output_path: PathBuf) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
     let x = config.clone();
     thread::spawn(move || {
@@ -317,12 +316,7 @@ fn start_write_out_thread(run_id: String, config: Cli) -> SyncSender<ReadInfo> {
         let mut read_numbers_seen: FnvHashSet<String> =
             FnvHashSet::with_capacity_and_hasher(4000, Default::default());
         let mut file_counter = 0;
-        let output_dir = PathBuf::from(format!(
-            "{}/{}/{}/fast5/",
-            config.output_path.display(),
-            config.parameters.experiment_name,
-            config.parameters.sample_name
-        ));
+        let output_dir = PathBuf::from(format!("{}/fast5_pass/", output_path.display()));
         if !output_dir.exists() {
             create_ouput_dir(&output_dir).unwrap();
         }
@@ -442,7 +436,10 @@ fn start_unblock_thread(
 
 /// Process a get_live_reads_request StreamSetup, setting all the fields on the Threads RunSetup struct. This actually has no
 /// effect on the run itself, but could be implemented to do so in the future if required.
-fn setup(setuppy: get_live_reads_request::Request, setup_arc: Arc<Mutex<RunSetup>>) -> (usize, usize, usize) {
+fn setup(
+    setuppy: get_live_reads_request::Request,
+    setup_arc: Arc<Mutex<RunSetup>>,
+) -> (usize, usize, usize) {
     let mut setup = setup_arc.lock().unwrap();
     info!("Received stream setup, setting up.");
     if let get_live_reads_request::Request::Setup(_h) = setuppy {
@@ -826,7 +823,7 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             time_accessed: Utc::now(),
             time_unblocked: Utc::now(),
             dead: false,
-            last_read_len: 0
+            last_read_len: 0,
         };
         num.push(read_info);
     }
@@ -918,7 +915,7 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn new(run_id: String, cli_opts: Cli) -> DataServiceServicer {
+    pub fn new(run_id: String, cli_opts: Cli, output_path: PathBuf) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
@@ -938,7 +935,7 @@ impl DataServiceServicer {
 
         let (views, dist) = process_samples_from_config(&config);
         let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
-        let complete_read_tx = start_write_out_thread(run_id, cli_opts);
+        let complete_read_tx = start_write_out_thread(run_id, cli_opts, output_path.clone());
 
         // start the thread to generate data
         thread::spawn(move || {
@@ -980,7 +977,8 @@ impl DataServiceServicer {
                         value.was_unblocked = false;
                         // Could be a slow problem here?
                         value.write_out = false;
-                        value.dead = rng.gen_bool(0.025 + 0.025 * (value.last_read_len as f64 / 1e5));
+                        value.dead =
+                            rng.gen_bool(0.025 + 0.025 * (value.last_read_len as f64 / 1e5));
                         // chance to aquire a read
                         if rng.gen_bool(0.05) {
                             read_number += 1;
@@ -995,7 +993,7 @@ impl DataServiceServicer {
                                 &barcode_squig,
                             )
                         }
-                    } 
+                    }
                 }
                 let _end = now.elapsed().as_millis() - start;
             }
@@ -1005,7 +1003,7 @@ impl DataServiceServicer {
             read_data: safe,
             action_responses: action_response_safe,
             setup: is_safe_setup,
-            break_chunks_ms
+            break_chunks_ms,
         }
     }
 }
@@ -1064,7 +1062,7 @@ impl DataService for DataServiceServicer {
 
                     // calculate number of samples to slice - roughly the time we break reads * 4000, so for the default 0.4 seconds
                     // we serve 0.4 * 4000 (1600) samples
-                   
+
                     // The below code block allows us to Send the responses across an await.
                     {
                         // get the channel data vec
@@ -1114,7 +1112,7 @@ impl DataService for DataServiceServicer {
                     // reset channel so we don't over total number of channels whilst spinning for data
                     }
                     let mut channel_data = HashMap::with_capacity(24);
-                    
+
                     for chunk in container.chunks(24) {
                         for (channel,read_data) in chunk {
                             channel_data.insert(channel.clone() as u32, read_data.clone());
