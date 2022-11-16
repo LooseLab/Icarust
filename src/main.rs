@@ -20,14 +20,14 @@ extern crate log;
 /// Import all our definied services
 mod services;
 
-use std::fs;
-use std::net::SocketAddr;
+use chrono::prelude::*;
 use clap::Parser;
 use rand_distr::Gamma;
 use serde::Deserialize;
+use std::fs;
+use std::net::SocketAddr;
 use tonic::transport::{Certificate, Identity, Server, ServerTlsConfig};
 use uuid::Uuid;
-
 
 use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::analysis_configuration::Analysis;
@@ -36,7 +36,7 @@ use crate::impl_services::device::Device;
 use crate::impl_services::instance::Instance;
 use crate::impl_services::log::Log;
 use crate::impl_services::manager::Manager;
-use crate::impl_services::protocol::Protocol;
+use crate::impl_services::protocol::ProtocolServiceServicer;
 
 use crate::services::minknow_api::acquisition::acquisition_service_server::AcquisitionServiceServer;
 use crate::services::minknow_api::analysis_configuration::analysis_configuration_service_server::AnalysisConfigurationServiceServer;
@@ -44,9 +44,7 @@ use crate::services::minknow_api::data::data_service_server::DataServiceServer;
 use crate::services::minknow_api::device::device_service_server::DeviceServiceServer;
 use crate::services::minknow_api::instance::instance_service_server::InstanceServiceServer;
 use crate::services::minknow_api::log::log_service_server::LogServiceServer;
-use crate::services::minknow_api::manager::flow_cell_position::{
-    RpcPorts, SharedHardwareGroup,
-};
+use crate::services::minknow_api::manager::flow_cell_position::{RpcPorts, SharedHardwareGroup};
 use crate::services::minknow_api::manager::manager_service_server::ManagerServiceServer;
 use crate::services::minknow_api::manager::FlowCellPosition;
 use crate::services::minknow_api::protocol::protocol_service_server::ProtocolServiceServer;
@@ -135,7 +133,7 @@ struct Parameters {
     experiment_duration_set: Option<usize>,
     device_id: String,
     position: String,
-    chunk_size_ms: Option<u64>
+    chunk_size_ms: Option<u64>,
 }
 
 impl Parameters {
@@ -199,15 +197,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = cli::Cli::parse();
     args.set_logging();
     args.check_config_exists();
-    // Parse the config to load all the samples 
+    // Parse the config to load all the samples
     let config = _load_toml(&args.config);
     config.check_fields();
     // Setup the TLS certifcates using the Minknow TLS certs
-    let cert =  tokio::fs::read("tls/rpc-certs/localhost.crt").await?;
+    let cert = tokio::fs::read("tls/rpc-certs/localhost.crt").await?;
     let key = tokio::fs::read("tls/rpc-certs/localhost.key").await?;
     let server_identity = Identity::from_pem(cert, key);
-    let tls = ServerTlsConfig::new()
-        .identity(server_identity);
+    let tls = ServerTlsConfig::new().identity(server_identity);
     let tls_position = tls.clone();
 
     // Set the positions that we will be serving on
@@ -215,6 +212,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr_position: SocketAddr = "[::0]:10001".parse().unwrap();
     // Randomly generate a run id
     let run_id = Uuid::new_v4().to_string().replace('-', "");
+    let sample_id = config.parameters.sample_name.clone();
+    let experiment_id = config.parameters.experiment_name.clone();
+    let output_dir = config.output_path.clone();
+    let start_time: DateTime<Utc> = Utc::now();
+    let start_string: String = format!("{}", start_time.format("%Y%m%d_%H%M"));
+    let flowcell_id = config.parameters.flowcell_name.clone();
+    let mut output_path = output_dir.clone();
+    output_path.push(experiment_id);
+    output_path.push(sample_id);
+    output_path.push(format!("{}_XIII_{}_{}", start_string,
+    flowcell_id,
+    run_id[0..9].to_string(),));
+
 
     // Create the manager server and add the service to it
     let manager_init = Manager {
@@ -223,21 +233,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             state: 1,
             rpc_ports: Some(RpcPorts {
                 secure: 10001,
-                secure_grpc_web: 420
+                secure_grpc_web: 420,
             }),
             protocol_state: 1,
             error_info: "Unknown state, please help".to_string(),
             shared_hardware_group: Some(SharedHardwareGroup { group_id: 1 }),
             is_integrated: true,
             can_sequence_offline: true,
-            location: None
+            location: None,
         }],
     };
     let svc = ManagerServiceServer::new(manager_init);
     // Spawn an Async thread and send it off somewhere
     tokio::spawn(async move {
         Server::builder()
-            .tls_config(tls).unwrap()
+            .tls_config(tls)
+            .unwrap()
             .concurrency_limit_per_connection(256)
             .add_service(svc)
             .serve(addr_manager)
@@ -252,11 +263,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {
         run_id: run_id.clone(),
     });
-    let protocol_svc = ProtocolServiceServer::new(Protocol {});
-    let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id, args));
+    let protocol_svc = ProtocolServiceServer::new(ProtocolServiceServicer::new(
+        run_id.clone(),
+        output_path.clone()
+    ));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id.clone(), args, output_path.clone()));
 
     Server::builder()
-        .tls_config(tls_position).unwrap()
+        .tls_config(tls_position)
+        .unwrap()
         .concurrency_limit_per_connection(256)
         .add_service(log_svc)
         .add_service(device_svc)
