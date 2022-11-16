@@ -1,22 +1,40 @@
+use std::path::PathBuf;
+
 use prost_types::Timestamp;
 use tonic::{Request, Response, Status};
 
 use crate::services::minknow_api::protocol::protocol_service_server::ProtocolService;
 use crate::services::minknow_api::protocol::{GetCurrentProtocolRunRequest, ProtocolRunInfo};
 
-pub struct Protocol;
+pub struct ProtocolServiceServicer {
+    run_id: String,
+    output_path: PathBuf
+}
+
+impl ProtocolServiceServicer {
+    pub fn new(
+        run_id: String,
+        output_path: PathBuf,
+    ) -> ProtocolServiceServicer {
+
+        ProtocolServiceServicer {
+            run_id,
+            output_path    
+        }
+    }
+}
 
 #[tonic::async_trait]
-impl ProtocolService for Protocol {
+impl ProtocolService for ProtocolServiceServicer {
     async fn get_current_protocol_run(
         &self,
         _request: Request<GetCurrentProtocolRunRequest>,
     ) -> Result<Response<ProtocolRunInfo>, Status> {
         Ok(Response::new(ProtocolRunInfo {
-            run_id: "Hi".to_string(),
+            run_id: self.run_id.clone(),
             protocol_id: "IAMAPROTOCOL".to_string(),
             args: vec!["settings".to_string()],
-            output_path: "HI".to_string(),
+            output_path: String::from(self.output_path.clone().to_str().unwrap()),
             state: 2,
             phase: 2,
             last_phase_change: None,
