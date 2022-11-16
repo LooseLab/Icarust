@@ -30,6 +30,7 @@ rm-frust5-api = "0.0.3"
 chrono = "0.4"
 byteorder = "1"
 clap = { version = "3.2.5", features = ["derive"] }
+configparser = "3.0.2"
 
 
 [build-dependencies]
