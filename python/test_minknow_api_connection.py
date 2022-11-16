@@ -35,8 +35,6 @@ class MinionManager(Manager):
         use_tls: bool
             Default False. Use TLS connection
         """
-        print(Path().cwd())
-        print(minknow_api.GRPC_CHANNEL_OPTIONS)
         logger.info(f"Installed minknow API Version {mversion}")
         if mversion.startswith("5"):
             host = kwargs.get("host", "localhost")
@@ -66,6 +64,8 @@ class MinionManager(Manager):
                 if position.running:
                     connected_position = position.connect()
                     device_connected = connected_position.device.get_calibration(first_channel=1, last_channel=512)
+                    output_path = connected_position.protocol.get_current_protocol_run()
+                    logger.info(output_path.output_path)
                     if device_connected:
                         # TODO note that we cannot connect to a remote instance without an ip websocket
                         logger.info("Connected")
