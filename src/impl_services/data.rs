@@ -963,7 +963,8 @@ impl DataServiceServicer {
                 debug!("Sequencer mock loop start");
                 let mut new_reads = 0;
                 let mut dead_pores = 0;
-                let mut empty_pores = 3000;
+                let mut empty_pores = 0;
+                let mut occupied = 0;
                 let start = now.elapsed().as_millis();
                 // sleep the length of the milliseconds chunk size
                 thread::sleep(Duration::from_millis(config.parameters.get_chunk_size_ms()));
@@ -981,6 +982,8 @@ impl DataServiceServicer {
                     }
                     if value.read.is_empty() {
                         empty_pores += 1;
+                    } else {
+                        occupied += 1;
                     }
                     let read_estimated_finish_time =
                         value.start_time_seconds as usize + value.duration;
@@ -997,7 +1000,7 @@ impl DataServiceServicer {
                         // Could be a slow problem here?
                         value.write_out = false;
                         value.dead =
-                            rng.gen_bool(die_chance + 0.025 * (value.last_read_len as f64 / 1e5));
+                            rng.gen_bool(die_chance + 0.00005 * (value.last_read_len as f64 / 1e5));
                         // chance to aquire a read
                         if rng.gen_bool(reacquire_chance) {
                             new_reads += 1;
@@ -1017,8 +1020,8 @@ impl DataServiceServicer {
                 }
                 let _end = now.elapsed().as_millis() - start;
                 info!(
-                    "New reads: {}, Empty pores: {}, Dead pores: {}",
-                    new_reads, empty_pores, dead_pores
+                    "New reads: {}, Occupied: {}, Empty pores: {}, Dead pores: {}",
+                    new_reads, occupied, empty_pores, dead_pores
                 );
             }
         });

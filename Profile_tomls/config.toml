@@ -1,4 +1,6 @@
 output_path = "/tmp/"
+reacquisition = 0.06
+die = 0.0001
 
 [parameters]
 sample_name = "test"
