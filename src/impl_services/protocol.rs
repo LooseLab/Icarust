@@ -8,18 +8,14 @@ use crate::services::minknow_api::protocol::{GetCurrentProtocolRunRequest, Proto
 
 pub struct ProtocolServiceServicer {
     run_id: String,
-    output_path: PathBuf
+    output_path: PathBuf,
 }
 
 impl ProtocolServiceServicer {
-    pub fn new(
-        run_id: String,
-        output_path: PathBuf,
-    ) -> ProtocolServiceServicer {
-
+    pub fn new(run_id: String, output_path: PathBuf) -> ProtocolServiceServicer {
         ProtocolServiceServicer {
             run_id,
-            output_path    
+            output_path,
         }
     }
 }

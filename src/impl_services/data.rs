@@ -249,7 +249,11 @@ fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNp
 }
 
 /// Start the thread that will handle writing out the FAST5 file,
-fn start_write_out_thread(run_id: String, config: Cli, output_path: PathBuf) -> SyncSender<ReadInfo> {
+fn start_write_out_thread(
+    run_id: String,
+    config: Cli,
+    output_path: PathBuf,
+) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(4000);
     let x = config.clone();
     thread::spawn(move || {
@@ -940,7 +944,16 @@ impl DataServiceServicer {
         // start the thread to generate data
         thread::spawn(move || {
             let mut rng: StdRng = rand::SeedableRng::seed_from_u64(1234567);
-
+            // Get chance to die from the config
+            let die_chance = match config.die {
+                Some(die) => die,
+                None => 0.025,
+            };
+            // Get chance to acquire a new read
+            let reacquire_chance = match config.reacquisition {
+                Some(reacquisition) => reacquisition,
+                None => 0.1,
+            };
             // read number for adding to unblock
             let mut read_number: u32 = 0;
             setup_channel_vec(channel_size, &thread_safe);
@@ -948,7 +961,9 @@ impl DataServiceServicer {
             // Infinte loop for data generation
             loop {
                 debug!("Sequencer mock loop start");
-
+                let mut new_reads = 0;
+                let mut dead_pores = 0;
+                let mut empty_pores = 3000;
                 let start = now.elapsed().as_millis();
                 // sleep the length of the milliseconds chunk size
                 thread::sleep(Duration::from_millis(config.parameters.get_chunk_size_ms()));
@@ -961,7 +976,11 @@ impl DataServiceServicer {
                 for i in 0..channel_size {
                     let value = num.get_mut(i).unwrap();
                     if value.dead {
+                        dead_pores += 1;
                         continue;
+                    }
+                    if value.read.is_empty() {
+                        empty_pores += 1;
                     }
                     let read_estimated_finish_time =
                         value.start_time_seconds as usize + value.duration;
@@ -978,9 +997,10 @@ impl DataServiceServicer {
                         // Could be a slow problem here?
                         value.write_out = false;
                         value.dead =
-                            rng.gen_bool(0.025 + 0.025 * (value.last_read_len as f64 / 1e5));
+                            rng.gen_bool(die_chance + 0.025 * (value.last_read_len as f64 / 1e5));
                         // chance to aquire a read
-                        if rng.gen_bool(0.05) {
+                        if rng.gen_bool(reacquire_chance) {
+                            new_reads += 1;
                             read_number += 1;
                             generate_read(
                                 &files,
@@ -996,6 +1016,10 @@ impl DataServiceServicer {
                     }
                 }
                 let _end = now.elapsed().as_millis() - start;
+                info!(
+                    "New reads: {}, Empty pores: {}, Dead pores: {}",
+                    new_reads, empty_pores, dead_pores
+                );
             }
         });
         // return our newly initialised DataServiceServicer to add onto the GRPC server

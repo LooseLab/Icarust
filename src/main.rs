@@ -22,13 +22,13 @@ mod services;
 
 use chrono::prelude::*;
 use clap::Parser;
+use configparser::ini::Ini;
 use rand_distr::Gamma;
 use serde::Deserialize;
 use std::fs;
 use std::net::SocketAddr;
 use tonic::transport::{Identity, Server, ServerTlsConfig};
 use uuid::Uuid;
-use configparser::ini::Ini;
 
 use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::analysis_configuration::Analysis;
@@ -57,6 +57,8 @@ struct Config {
     output_path: std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     random_seed: Option<u64>,
+    reacquisition: Option<f64>,
+    die: Option<f64>,
 }
 
 impl Config {
@@ -206,17 +208,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut software_config = Ini::new();
     software_config.load("tests/test.ini")?;
 
-    let m_port = software_config.getint("PORTS", "manager").unwrap().expect("Error reading config manager port.");
-    let a_port = software_config.getint("PORTS", "position").unwrap().expect("Error reading config position port.");
-    let tls_cert_path = software_config.get("TLS", "cert-dir").expect("Tls cert dir not found in config.ini");
+    let m_port = software_config
+        .getint("PORTS", "manager")
+        .unwrap()
+        .expect("Error reading config manager port.");
+    let a_port = software_config
+        .getint("PORTS", "position")
+        .unwrap()
+        .expect("Error reading config position port.");
+    let tls_cert_path = software_config
+        .get("TLS", "cert-dir")
+        .expect("Tls cert dir not found in config.ini");
     // Setup the TLS certifcates using the Minknow TLS certs
     let cert = tokio::fs::read(format!("{}/localhost.crt", tls_cert_path)).await?;
     let key = tokio::fs::read(format!("{}/localhost.key", tls_cert_path)).await?;
     let server_identity = Identity::from_pem(cert, key);
     let tls = ServerTlsConfig::new().identity(server_identity);
     let tls_position = tls.clone();
-
-
 
     // Set the positions that we will be serving on
     let addr_manager = format!("localhost:{}", m_port).parse().unwrap();
@@ -232,9 +240,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut output_path = output_dir.clone();
     output_path.push(experiment_id);
     output_path.push(sample_id);
-    output_path.push(format!("{}_XIII_{}_{}", start_string,
-    flowcell_id,
-    run_id[0..9].to_string(),));
+    output_path.push(format!(
+        "{}_XIII_{}_{}",
+        start_string,
+        flowcell_id,
+        run_id[0..9].to_string(),
+    ));
 
     // Create the manager server and add the service to it
     let manager_init = Manager {
@@ -275,9 +286,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let protocol_svc = ProtocolServiceServer::new(ProtocolServiceServicer::new(
         run_id.clone(),
-        output_path.clone()
+        output_path.clone(),
     ));
-    let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id.clone(), args, output_path.clone()));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(
+        run_id.clone(),
+        args,
+        output_path.clone(),
+    ));
 
     Server::builder()
         .tls_config(tls_position)
