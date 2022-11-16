@@ -22,13 +22,14 @@ mod services;
 
 use chrono::prelude::*;
 use clap::Parser;
+use configparser::ini::Ini;
 use rand_distr::Gamma;
 use serde::Deserialize;
 use std::fs;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use tonic::transport::{Identity, Server, ServerTlsConfig};
 use uuid::Uuid;
-use configparser::ini::Ini;
 
 use crate::impl_services::acquisition::Acquisition;
 use crate::impl_services::analysis_configuration::Analysis;
@@ -57,6 +58,8 @@ struct Config {
     output_path: std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     random_seed: Option<u64>,
+    reacquisition: Option<f64>,
+    die: Option<f64>,
 }
 
 impl Config {
@@ -204,23 +207,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Read the config.ini to get the TLS and ports
     let mut software_config = Ini::new();
-    software_config.load("tests/test.ini")?;
+    software_config.load("config.ini")?;
 
-    let m_port = software_config.getint("PORTS", "manager").unwrap().expect("Error reading config manager port.");
-    let a_port = software_config.getint("PORTS", "position").unwrap().expect("Error reading config position port.");
-    let tls_cert_path = software_config.get("TLS", "cert-dir").expect("Tls cert dir not found in config.ini");
-    // Setup the TLS certifcates using the Minknow TLS certs
-    let cert = tokio::fs::read(format!("{}/localhost.crt", tls_cert_path)).await?;
-    let key = tokio::fs::read(format!("{}/localhost.key", tls_cert_path)).await?;
+    let m_port = software_config
+        .getint("PORTS", "manager")
+        .unwrap()
+        .expect("Error reading config manager port.");
+    let a_port = software_config
+        .getint("PORTS", "position")
+        .unwrap()
+        .expect("Error reading config position port.");
+    let tls_cert_path = PathBuf::from(
+        software_config
+            .get("TLS", "cert-dir")
+            .expect("Tls cert dir not found in config.ini"),
+    ); // Setup the TLS certifcates using the Minknow TLS certs
+    let cert =
+        tokio::fs::read(format!("{}", tls_cert_path.join("localhost.crt").display())).await?;
+    let key = tokio::fs::read(format!("{}", tls_cert_path.join("localhost.key").display())).await?;
     let server_identity = Identity::from_pem(cert, key);
     let tls = ServerTlsConfig::new().identity(server_identity);
     let tls_position = tls.clone();
-
-
-
+    println!("localhost:{}", m_port);
+    println!("localhost:{}", a_port);
     // Set the positions that we will be serving on
-    let addr_manager = format!("localhost:{}", m_port).parse().unwrap();
-    let addr_position: SocketAddr = format!("localhost:{}", a_port).parse().unwrap();
+    let addr_manager = format!("127.0.0.1:{}", m_port).parse().unwrap();
+    let addr_position: SocketAddr = format!("127.0.0.1:{}", a_port).parse().unwrap();
     // Randomly generate a run id
     let run_id = Uuid::new_v4().to_string().replace('-', "");
     let sample_id = config.parameters.sample_name.clone();
@@ -232,9 +244,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut output_path = output_dir.clone();
     output_path.push(experiment_id);
     output_path.push(sample_id);
-    output_path.push(format!("{}_XIII_{}_{}", start_string,
-    flowcell_id,
-    run_id[0..9].to_string(),));
+    output_path.push(format!(
+        "{}_XIII_{}_{}",
+        start_string,
+        flowcell_id,
+        run_id[0..9].to_string(),
+    ));
 
     // Create the manager server and add the service to it
     let manager_init = Manager {
@@ -275,9 +290,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let protocol_svc = ProtocolServiceServer::new(ProtocolServiceServicer::new(
         run_id.clone(),
-        output_path.clone()
+        output_path.clone(),
     ));
-    let data_svc = DataServiceServer::new(DataServiceServicer::new(run_id.clone(), args, output_path.clone()));
+    let data_svc = DataServiceServer::new(DataServiceServicer::new(
+        run_id.clone(),
+        args,
+        output_path.clone(),
+    ));
 
     Server::builder()
         .tls_config(tls_position)
