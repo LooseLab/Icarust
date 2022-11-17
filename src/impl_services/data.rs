@@ -336,6 +336,7 @@ fn start_write_out_thread(
                         &run_id[0..6],
                         file_counter
                     );
+                    info!("Writing out file to {}", fast5_file_name );
                     // drain 4000 reads and write them into a FAST5 file
                     let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
                     for to_write_info in read_infos.drain(..4000) {
@@ -1020,8 +1021,8 @@ impl DataServiceServicer {
                 }
                 let _end = now.elapsed().as_millis() - start;
                 info!(
-                    "New reads: {}, Occupied: {}, Empty pores: {}, Dead pores: {}",
-                    new_reads, occupied, empty_pores, dead_pores
+                    "New reads: {}, Occupied: {}, Empty pores: {}, Dead pores: {}, Total reads: {}",
+                    new_reads, occupied, empty_pores, dead_pores, read_number
                 );
             }
         });
