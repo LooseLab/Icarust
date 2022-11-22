@@ -984,6 +984,7 @@ impl DataServiceServicer {
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
+            let mut completed_reads: u32 = 0;
 
             // Infinte loop for data generation
             loop {
@@ -994,7 +995,6 @@ impl DataServiceServicer {
                 let mut empty_pores = 0;
                 let mut awaiting_reacquisition = 0;
                 let mut occupied = 0;
-                let mut completed_reads: u32 = 0;
                 let start = now.elapsed().as_secs_f64();
                 // sleep the length of the milliseconds chunk size
                 // Don't sleep the thread just reacquire reads
@@ -1016,7 +1016,6 @@ impl DataServiceServicer {
                         empty_pores += 1;
                         if value.pause > 0.0 {
                             value.pause -= time_taken;
-                            // info!("PAUSED {:#?} ", value);
                             awaiting_reacquisition += 1;
                             continue;
                         }
@@ -1032,15 +1031,16 @@ impl DataServiceServicer {
                     if experiment_time as usize > read_estimated_finish_time || value.was_unblocked
                     {
                         if value.write_out {
-                            // println!("{:#?}", value);
-                            // info!("SEtting pause on ln 1032");
+
                             completed_reads += 1;
                             complete_read_tx.send(value.clone()).unwrap();
                             value.pause = r.sample(&mut rng);
+                            // The potnetial chance to die
                             let potential_yolo_death =
                                 death_chance.get(&value.read_sample_name).unwrap();
                             // all our death chances are altered by yield, so we need to change the chance of death of a read was unblocked due to the lowered yield
                             let prev_chance_multiplier = match value.was_unblocked {
+                                // we unblocked the read and now we need to alter teh chance of death to be lower as the read was lower
                                 true => {
                                     let unblock_time = value.time_unblocked;
                                     let prev_time = value.start_time_utc;
@@ -1086,7 +1086,6 @@ impl DataServiceServicer {
                 }
                 let _end = now.elapsed().as_secs_f64();
                 if _end.ceil() > time_logged_at {
-                    info!("{}", _end.ceil());
                     info!(
                         "New reads: {}, Occupied: {}, Empty pores: {}, Dead pores: {}, Sequenced reads: {}, Awaiting: {}",
                         new_reads, occupied, empty_pores, dead_pores, completed_reads, awaiting_reacquisition
