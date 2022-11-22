@@ -50,7 +50,7 @@ Global fields are applied more as configuration variables that apply throughout 
 |          Key |       Type      | Required | Description |
 |:-------------|:---------------:|:-----------:|:--------:|
 | output_path | string | True | The path to a directory that the resulting FAST5 and readfish unblocked_read_ids.txt file will be written to. | 
-| global_mean_read_length | int | False | If set, any samples that do not have their own read length field will use this value| 
+| global_mean_read_length | int | False | If set, any samples that do not have their own read length field will use this value.| 
 | random_seed | int  | False | The seed to use in any Random Number generation. If set this makes exeriments repeatable if the value is retained. | 
 
 ### Parameters

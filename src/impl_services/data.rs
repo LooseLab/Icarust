@@ -34,12 +34,14 @@ use ndarray::{s, Array1, ArrayBase, ArrayView1, Dim, ViewRepr};
 use ndarray_npy::{read_npy, ReadNpyError, ViewNpyExt};
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
-use rand_distr::{Distribution, Gamma, SkewNormal};
+use rand_distr::{Distribution, SkewNormal};
 use serde::Deserialize;
 use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::cli::Cli;
+use crate::reacquisition_distribution::{ReacquisitionPoisson, SampleDist};
+use crate::read_length_distribution::ReadLengthDist;
 use crate::services::minknow_api::data::data_service_server::DataService;
 use crate::services::minknow_api::data::get_data_types_response::DataType;
 use crate::services::minknow_api::data::get_live_reads_request::action;
@@ -97,7 +99,7 @@ struct SampleInfo {
     barcodes: Option<Vec<String>>,
     barcode_weights: Option<WeightedIndex<usize>>,
     uneven: Option<bool>,
-    read_len_gamma: Gamma<f64>,
+    read_len_dist: ReadLengthDist,
     files: Vec<FileInfo>,
     is_amplicon: bool,
     is_barcoded: bool,
@@ -111,14 +113,14 @@ impl SampleInfo {
         uneven: Option<bool>,
         is_amplicon: bool,
         is_barcoded: bool,
-        read_len_gamma: Gamma<f64>,
+        read_len_dist: ReadLengthDist,
     ) -> SampleInfo {
         SampleInfo {
             name,
             barcodes,
             barcode_weights: None,
             uneven,
-            read_len_gamma,
+            read_len_dist,
             files: vec![],
             is_amplicon,
             is_barcoded,
@@ -175,6 +177,9 @@ struct ReadInfo {
     time_unblocked: DateTime<Utc>,
     dead: bool,
     last_read_len: u64,
+    pause: f64,
+    // Which sample is this read from - so we can get the chance it kills the pore
+    read_sample_name: String,
 }
 
 impl fmt::Debug for ReadInfo {
@@ -191,6 +196,10 @@ impl fmt::Debug for ReadInfo {
         Time Started: {}
         Time Accessed: {}
         Prev Chunk End: {}
+        Dead: {}
+        Read from: {}
+        Pause: {}
+        WriteOut: {}
         }}",
             self.read_id,
             self.stop_receiving,
@@ -200,7 +209,11 @@ impl fmt::Debug for ReadInfo {
             self.duration,
             self.start_time_utc,
             self.time_accessed,
-            self.prev_chunk_start
+            self.prev_chunk_start,
+            self.dead,
+            self.read_sample_name,
+            self.pause,
+            self.write_out
         )
     }
 }
@@ -336,7 +349,7 @@ fn start_write_out_thread(
                         &run_id[0..6],
                         file_counter
                     );
-                    info!("Writing out file to {}", fast5_file_name );
+                    info!("Writing out file to {}", fast5_file_name);
                     // drain 4000 reads and write them into a FAST5 file
                     let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
                     for to_write_info in read_infos.drain(..4000) {
@@ -397,7 +410,7 @@ fn start_write_out_thread(
                     read_numbers_seen.clear();
                 }
             }
-            thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_millis(400));
         }
     });
     complete_read_tx
@@ -773,7 +786,7 @@ fn read_views_of_data(
     let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
         ArrayView1::<i16>::view_npy(&mmap).unwrap();
     let size = view.shape()[0];
-    let read_gamma = sample_info.get_read_len_dist(global_mean_read_length);
+    let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
     let file_info = FileInfo::new(size, view.to_owned());
     let sample = views
         .entry(sample_info.name.clone())
@@ -783,7 +796,7 @@ fn read_views_of_data(
             sample_info.uneven,
             sample_info.is_amplicon(),
             sample_info.is_barcoded(),
-            read_gamma,
+            read_length_dist,
         ));
     sample.files.push(file_info)
 }
@@ -802,11 +815,19 @@ fn convert_seconds_to_samples(milliseconds: i64) -> usize {
 /// The created Vec is populated by ReadInfo structs, which are used to track the ongoing state of a channel during a run.
 ///
 /// This vec already exists and is shared around, so is not returned by this function.
-fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
+/// Returns the number of pores that are alive.
+fn setup_channel_vec(
+    size: usize,
+    thread_safe: &Arc<Mutex<Vec<ReadInfo>>>,
+    rng: &mut StdRng,
+    wpp: usize,
+) -> usize {
     // Create channel Mutexed vec - here we hold a Vec of chunks to be served each iteration below
     let thread_safe_chunks = Arc::clone(thread_safe);
 
     let mut num = thread_safe_chunks.lock().unwrap();
+    let percent_pore = wpp as f64 / 100.0;
+    let mut alive = 0;
     for channel_number in 1..size + 1 {
         let read_info = ReadInfo {
             read_id: Uuid::nil().to_string(),
@@ -827,11 +848,17 @@ fn setup_channel_vec(size: usize, thread_safe: &Arc<Mutex<Vec<ReadInfo>>>) {
             duration: 0,
             time_accessed: Utc::now(),
             time_unblocked: Utc::now(),
-            dead: false,
+            dead: !(rng.gen_bool(percent_pore)),
             last_read_len: 0,
+            pause: 0.0,
+            read_sample_name: String::from(""),
         };
+        if !read_info.dead {
+            alive += 1
+        }
         num.push(read_info);
     }
+    alive
 }
 
 /// Generate an inital read, which is stored as a ReadInfo in the channel_read_info vec. This is mutated in place.
@@ -859,10 +886,12 @@ fn generate_read(
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
     let sample_choice: &String = &samples[dist.sample(rng)];
+    value.read_sample_name = sample_choice.clone();
     let sample_info = &views[sample_choice];
     // choose a barcode if we need to - else we always use the first distirbution in the vec
     let mut file_weight_choice: usize = 0;
     let mut barcode = None;
+    // choose barcode
     if sample_info.is_barcoded {
         // this is analagous to the choice of the barcode as well - the file weights are in vec with one weight per barcode
         file_weight_choice = sample_info.barcode_weights.as_ref().unwrap().sample(rng);
@@ -892,7 +921,7 @@ fn generate_read(
         false => rng.gen_range(0..file_info.contig_len - 1000) as usize,
     };
     // Get our distribution from either the Sample specified Gamma or the global read length
-    let read_distribution = sample_info.read_len_gamma;
+    let read_distribution = &sample_info.read_len_dist;
     let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
     let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
@@ -923,6 +952,7 @@ impl DataServiceServicer {
     pub fn new(run_id: String, cli_opts: Cli, output_path: PathBuf) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
+        let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
         let channel_size = get_channel_size();
         let start_time: u64 = Utc::now().timestamp() as u64;
@@ -941,34 +971,34 @@ impl DataServiceServicer {
         let (views, dist) = process_samples_from_config(&config);
         let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
         let complete_read_tx = start_write_out_thread(run_id, cli_opts, output_path.clone());
+        let mut rng: StdRng = rand::SeedableRng::seed_from_u64(1234567);
 
+        let starting_functional_pore_count =
+            setup_channel_vec(channel_size, &thread_safe, &mut rng, working_pore_percent);
+        let death_chance = config.calculate_death_chance(starting_functional_pore_count);
+        let mut time_logged_at: f64 = 0.0;
+        info!("deadth chance {:#?}", death_chance);
         // start the thread to generate data
         thread::spawn(move || {
-            let mut rng: StdRng = rand::SeedableRng::seed_from_u64(1234567);
-            // Get chance to die from the config
-            let die_chance = match config.die {
-                Some(die) => die,
-                None => 0.025,
-            };
-            // Get chance to acquire a new read
-            let reacquire_chance = match config.reacquisition {
-                Some(reacquisition) => reacquisition,
-                None => 0.1,
-            };
+            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.0, 0.0001, 0.0005);
+
             // read number for adding to unblock
             let mut read_number: u32 = 0;
-            setup_channel_vec(channel_size, &thread_safe);
 
             // Infinte loop for data generation
             loop {
+                let read_process = Instant::now();
                 debug!("Sequencer mock loop start");
                 let mut new_reads = 0;
                 let mut dead_pores = 0;
                 let mut empty_pores = 0;
+                let mut awaiting_reacquisition = 0;
                 let mut occupied = 0;
-                let start = now.elapsed().as_millis();
+                let mut completed_reads: u32 = 0;
+                let start = now.elapsed().as_secs_f64();
                 // sleep the length of the milliseconds chunk size
-                thread::sleep(Duration::from_millis(config.parameters.get_chunk_size_ms()));
+                // Don't sleep the thread just reacquire reads
+                thread::sleep(Duration::from_millis(10));
 
                 // get some basic stats about what is going on at each channel
                 let _channels_with_reads = 0;
@@ -976,6 +1006,7 @@ impl DataServiceServicer {
                 let mut num = thread_safe.lock().unwrap();
 
                 for i in 0..channel_size {
+                    let time_taken = read_process.elapsed().as_secs_f64();
                     let value = num.get_mut(i).unwrap();
                     if value.dead {
                         dead_pores += 1;
@@ -983,6 +1014,12 @@ impl DataServiceServicer {
                     }
                     if value.read.is_empty() {
                         empty_pores += 1;
+                        if value.pause > 0.0 {
+                            value.pause -= time_taken;
+                            // info!("PAUSED {:#?} ", value);
+                            awaiting_reacquisition += 1;
+                            continue;
+                        }
                     } else {
                         occupied += 1;
                     }
@@ -991,18 +1028,46 @@ impl DataServiceServicer {
                     // experiment_time is the time the experimanet has started until now
                     let experiment_time = Utc::now().timestamp() as u64 - start_time;
                     // info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
+                    // We should deal with this read as if it had finished
                     if experiment_time as usize > read_estimated_finish_time || value.was_unblocked
                     {
                         if value.write_out {
+                            // println!("{:#?}", value);
+                            // info!("SEtting pause on ln 1032");
+                            completed_reads += 1;
                             complete_read_tx.send(value.clone()).unwrap();
+                            value.pause = r.sample(&mut rng);
+                            let potential_yolo_death =
+                                death_chance.get(&value.read_sample_name).unwrap();
+                            // all our death chances are altered by yield, so we need to change the chance of death of a read was unblocked due to the lowered yield
+                            let prev_chance_multiplier = match value.was_unblocked {
+                                true => {
+                                    let unblock_time = value.time_unblocked;
+                                    let prev_time = value.start_time_utc;
+                                    let elapsed_time =
+                                        (unblock_time.time() - prev_time.time()).num_milliseconds();
+                                    // convert the elapsed time into a very rough amount of bases
+                                    (elapsed_time as f64 / 0.45)
+                                        / potential_yolo_death.mean_read_length
+                                }
+                                false => 1.0,
+                            };
+                            value.dead = rng.gen_bool(
+                                potential_yolo_death.base_chance * prev_chance_multiplier,
+                            );
                         }
                         value.read.clear();
                         value.was_unblocked = false;
                         // Could be a slow problem here?
                         value.write_out = false;
-                        value.dead =
-                            rng.gen_bool(die_chance + 0.00005 * (value.last_read_len as f64 / 1e5));
+                        // Our pore died, so sad
+                        if value.dead {
+                            dead_pores += 1;
+                            continue;
+                        }
+
                         // chance to aquire a read
+                        let reacquire_chance = r.sample(&mut rng);
                         if rng.gen_bool(reacquire_chance) {
                             new_reads += 1;
                             read_number += 1;
@@ -1019,11 +1084,19 @@ impl DataServiceServicer {
                         }
                     }
                 }
-                let _end = now.elapsed().as_millis() - start;
-                info!(
-                    "New reads: {}, Occupied: {}, Empty pores: {}, Dead pores: {}, Total reads: {}",
-                    new_reads, occupied, empty_pores, dead_pores, read_number
-                );
+                let _end = now.elapsed().as_secs_f64();
+                if _end.ceil() > time_logged_at {
+                    info!("{}", _end.ceil());
+                    info!(
+                        "New reads: {}, Occupied: {}, Empty pores: {}, Dead pores: {}, Sequenced reads: {}, Awaiting: {}",
+                        new_reads, occupied, empty_pores, dead_pores, completed_reads, awaiting_reacquisition
+                    );
+                    time_logged_at = _end.ceil();
+                }
+
+                if dead_pores == 3000 {
+                    break;
+                }
             }
         });
         // return our newly initialised DataServiceServicer to add onto the GRPC server
