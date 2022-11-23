@@ -93,7 +93,6 @@ impl fmt::Debug for FileInfo {
     }
 }
 /// Stores information about each sample listed in the config TOML.
-#[derive(Debug)]
 struct SampleInfo {
     name: String,
     barcodes: Option<Vec<String>>,
@@ -104,6 +103,30 @@ struct SampleInfo {
     is_amplicon: bool,
     is_barcoded: bool,
     file_weights: Vec<WeightedIndex<usize>>,
+}
+impl fmt::Debug for SampleInfo {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{{\n
+        Name: {}
+        Barcodes: {:#?}
+        Barcode Weights: {:#?}
+        Uneven: {:#?}
+        Files: {:#?}
+        Is Amplicon: {}
+        File weights: {:#?}
+        }}",
+            self.name,
+            self.barcodes,
+            self.barcode_weights,
+            self.uneven,
+            self.files,
+            self.is_amplicon,
+            self.file_weights
+
+        )
+    }
 }
 
 impl SampleInfo {
@@ -614,16 +637,12 @@ fn process_samples_from_config(
     for sample in &config.sample {
         // if the given sample input genome is actually a directory
         if sample.input_genome.is_dir() {
-            for entry in sample
-                .input_genome
-                .read_dir()
-                .expect("read_dir call failed")
-                .into_iter()
+            let mut t: Vec<DirEntry> = sample.input_genome.read_dir().expect("read_dir call failed").into_iter().map(|x| x.unwrap()).collect();
+            t.sort_by(|a, b| a.path().cmp(&b.path()));
+            for entry in t
             {
                 // only read files that are .npy squiggle
                 if entry
-                    .as_ref()
-                    .unwrap()
                     .path()
                     .extension()
                     .unwrap()
@@ -649,6 +668,7 @@ fn process_samples_from_config(
                 None => {
                     let num_files = sample_info.files.len();
                     let mut file_distributions = vec![];
+                    // If we have barcodes
                     if let Some(barcodes) = &sample.barcodes {
                         for _barcode in barcodes.iter() {
                             let disty = generate_file_sampling_distribution(num_files, &mut rng);
@@ -683,7 +703,8 @@ fn process_samples_from_config(
 
             // Time for barcoding shenanigans
             let sample_info = views.get_mut(&sample.name).unwrap();
-            // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn so we only ever see this file when we generate a read
+            // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
+            // so we only ever see this file when we generate a read
             sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
             let mut barcode_dists = None;
             if sample.is_barcoded() {
@@ -904,7 +925,7 @@ fn generate_read(
                 .unwrap(),
         )
     }
-    // need to choose a file at this point
+    // need to choose a squiggle file at this point
     let file_info = sample_info
         .files
         .get(
@@ -977,7 +998,7 @@ impl DataServiceServicer {
             setup_channel_vec(channel_size, &thread_safe, &mut rng, working_pore_percent);
         let death_chance = config.calculate_death_chance(starting_functional_pore_count);
         let mut time_logged_at: f64 = 0.0;
-        info!("deadth chance {:#?}", death_chance);
+        info!("Death chances {:#?}", death_chance);
         // start the thread to generate data
         thread::spawn(move || {
             let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.0, 0.0001, 0.0005);
