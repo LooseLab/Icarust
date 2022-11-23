@@ -15,7 +15,7 @@ use futures::{Stream, StreamExt};
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{create_dir_all, File};
+use std::fs::{create_dir_all, File, DirEntry};
 use std::mem;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -650,10 +650,10 @@ fn process_samples_from_config(
                     .unwrap()
                     == "npy"
                 {
-                    info!("Reading view for{:#?}", entry.as_ref().unwrap().path());
+                    info!("Reading view for{:#?}", entry.path());
                     read_views_of_data(
                         &mut views,
-                        &entry.unwrap().path().clone(),
+                        &entry.path().clone(),
                         config.global_mean_read_length,
                         sample,
                     );
