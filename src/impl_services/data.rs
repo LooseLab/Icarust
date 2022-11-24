@@ -1086,22 +1086,21 @@ impl DataServiceServicer {
                             dead_pores += 1;
                             continue;
                         }
-
                         // chance to aquire a read
-                        let reacquire_chance = r.sample(&mut rng);
-                        new_reads += 1;
-                        read_number += 1;
-                        generate_read(
-                            &files,
-                            value,
-                            &dist,
-                            &views,
-                            &mut rng,
-                            &mut read_number,
-                            &start_time,
-                            &barcode_squig,
-                        )
-                    
+                        if rng.gen_bool(0.01) {
+                            new_reads += 1;
+                            read_number += 1;   
+                            generate_read(
+                                &files,
+                                value,
+                                &dist,
+                                &views,
+                                &mut rng,
+                                &mut read_number,
+                                &start_time,
+                                &barcode_squig,
+                            )
+                        }
                     }
                 }
                 let _end = now.elapsed().as_secs_f64();
