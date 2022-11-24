@@ -433,7 +433,7 @@ fn start_write_out_thread(
                     read_numbers_seen.clear();
                 }
             }
-            thread::sleep(Duration::from_millis(400));
+            thread::sleep(Duration::from_millis(1));
         }
     });
     complete_read_tx
