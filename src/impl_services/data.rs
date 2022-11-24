@@ -385,7 +385,7 @@ fn start_write_out_thread(
                             let unblock_time = to_write_info.time_unblocked;
                             let prev_time = to_write_info.start_time_utc;
                             let elapsed_time = unblock_time.time() - prev_time.time();
-                            let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                            let stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
                             new_end = min(stop, to_write_info.read.len());
                         }
                         let signal = to_write_info.read[0..new_end].to_vec();
@@ -825,7 +825,7 @@ fn read_views_of_data(
 /// Convert an elapased period of time in milliseconds tinto samples
 ///
 ///
-fn convert_seconds_to_samples(milliseconds: i64) -> usize {
+fn convert_milliseconds_to_samples(milliseconds: i64) -> usize {
     (milliseconds * 4) as usize
 }
 
@@ -1152,6 +1152,8 @@ impl DataService for DataServiceServicer {
         let mut stream_counter = 1;
         let break_chunk_ms = &self.break_chunks_ms.clone();
         let chunk_size = break_chunk_ms / 1000 * 4000;
+        // Generous 400 bases a second so we send back maximum chunks of 1000kb worth of signal
+        let max_chunk_response_size: usize = 1000  / 400 * 4000;
         // Stream the responses back
         let output = async_stream::try_stream! {
             // Async channel that will await when it ahs one elemnt. This pushes the read response back immediately.
@@ -1181,6 +1183,8 @@ impl DataService for DataServiceServicer {
                     // magic splitting into 24 reads using a drain like wow magic
                     let channel_size = get_channel_size();
 
+                    let max_read_len_samples: usize = 30000;
+
                     // calculate number of samples to slice - roughly the time we break reads * 4000, so for the default 0.4 seconds
                     // we serve 0.4 * 4000 (1600) samples
 
@@ -1200,15 +1204,34 @@ impl DataService for DataServiceServicer {
                             debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
                             if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
                                 // work out where to start and stop our slice of signal
-                                let start = read_info.prev_chunk_start;
+                                let mut start = read_info.prev_chunk_start;
                                 let now_time = Utc::now();
-                                let prev_time = read_info.start_time_utc;
-                                let elapsed_time = now_time.time() - prev_time.time();
-                                let stop = convert_seconds_to_samples(elapsed_time.num_milliseconds());
+                                let read_start_time = read_info.start_time_utc;
+                                let elapsed_time = now_time.time() - read_start_time.time();
+                                // How far through the read we are in total samples
+                                let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
                                 // slice of signal is too short
                                 if start > stop || (stop - start) < chunk_size as usize {
                                     continue
                                 }
+
+                                // Read through pore is too long ( roughly longer than 4.5kb worth of bases through pore
+                                if stop > max_read_len_samples {
+                                    continue
+                                }
+
+                                // only send last chunks worth of data
+                                if  (stop - start) > (chunk_size as f64 * 1.1_f64) as usize {
+                                    // Work out where a break_reads size finishes 
+                                    // i.e if we have gotten 1.5 chunks worth since last time, that is not actually possible on a real sequencer.
+                                    // So we need to calculate where the 1 chunk finishes and set that as the prev_chunk_stop and serve it
+                                    let full_width = stop - start;
+                                    let chunks_in_width = full_width.div_euclid(chunk_size as usize);
+                                    stop = chunk_size as usize * chunks_in_width;
+                                    start = stop - chunk_size as usize;
+                                }
+
+                                // Only send back one chunks worth of data
                                 // don't overslice the read by going off the end
                                 let stop = min(stop, read_info.read.len());
                                 read_info.time_accessed = now_time;
