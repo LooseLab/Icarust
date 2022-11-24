@@ -1001,7 +1001,7 @@ impl DataServiceServicer {
         info!("Death chances {:#?}", death_chance);
         // start the thread to generate data
         thread::spawn(move || {
-            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.0, 0.0001, 0.0005);
+            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.0, 0.0001, 0.1);
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
