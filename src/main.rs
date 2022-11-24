@@ -169,12 +169,12 @@ struct Parameters {
     experiment_duration_set: Option<usize>,
     device_id: String,
     position: String,
-    chunk_size_ms: Option<u64>,
+    break_read_ms: Option<u64>,
 }
 
 impl Parameters {
     pub fn get_chunk_size_ms(&self) -> u64 {
-        match self.chunk_size_ms {
+        match self.break_read_ms {
             Some(ms) => ms,
             None => 400,
         }
