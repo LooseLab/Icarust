@@ -1089,20 +1089,19 @@ impl DataServiceServicer {
 
                         // chance to aquire a read
                         let reacquire_chance = r.sample(&mut rng);
-                        if rng.gen_bool(reacquire_chance) {
-                            new_reads += 1;
-                            read_number += 1;
-                            generate_read(
-                                &files,
-                                value,
-                                &dist,
-                                &views,
-                                &mut rng,
-                                &mut read_number,
-                                &start_time,
-                                &barcode_squig,
-                            )
-                        }
+                        new_reads += 1;
+                        read_number += 1;
+                        generate_read(
+                            &files,
+                            value,
+                            &dist,
+                            &views,
+                            &mut rng,
+                            &mut read_number,
+                            &start_time,
+                            &barcode_squig,
+                        )
+                    
                     }
                 }
                 let _end = now.elapsed().as_secs_f64();
@@ -1114,7 +1113,7 @@ impl DataServiceServicer {
                     time_logged_at = _end.ceil();
                 }
 
-                if dead_pores == 3000 {
+                if dead_pores == 2950 {
                     break;
                 }
             }
