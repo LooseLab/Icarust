@@ -1016,7 +1016,6 @@ impl DataServiceServicer {
                 let mut empty_pores = 0;
                 let mut awaiting_reacquisition = 0;
                 let mut occupied = 0;
-                let start = now.elapsed().as_secs_f64();
                 // sleep the length of the milliseconds chunk size
                 // Don't sleep the thread just reacquire reads
                 thread::sleep(Duration::from_millis(10));
@@ -1064,11 +1063,11 @@ impl DataServiceServicer {
                                 // we unblocked the read and now we need to alter teh chance of death to be lower as the read was lower
                                 true => {
                                     let unblock_time = value.time_unblocked;
-                                    let prev_time = value.start_time_utc;
+                                    let read_start_time = value.start_time_utc;
                                     let elapsed_time =
-                                        (unblock_time.time() - prev_time.time()).num_milliseconds();
+                                        (unblock_time - read_start_time).num_milliseconds();
                                     // convert the elapsed time into a very rough amount of bases
-                                    (elapsed_time as f64 / 0.45)
+                                    (elapsed_time as f64 * 0.45)
                                         / potential_yolo_death.mean_read_length
                                 }
                                 false => 1.0,
