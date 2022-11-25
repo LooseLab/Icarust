@@ -290,7 +290,7 @@ fn start_write_out_thread(
     config: Cli,
     output_path: PathBuf,
 ) -> SyncSender<ReadInfo> {
-    let (complete_read_tx, complete_read_rx) = sync_channel(4000);
+    let (complete_read_tx, complete_read_rx) = sync_channel(8000);
     let x = config.clone();
     thread::spawn(move || {
         let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
@@ -1001,7 +1001,7 @@ impl DataServiceServicer {
         info!("Death chances {:#?}", death_chance);
         // start the thread to generate data
         thread::spawn(move || {
-            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.45, 0.0001, 0.1);
+            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.45, 0.0001, 0.05);
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
@@ -1086,20 +1086,19 @@ impl DataServiceServicer {
                             continue;
                         }
                         // chance to aquire a read
-                        if rng.gen_bool(0.75) {
-                            new_reads += 1;
-                            read_number += 1;   
-                            generate_read(
-                                &files,
-                                value,
-                                &dist,
-                                &views,
-                                &mut rng,
-                                &mut read_number,
-                                &start_time,
-                                &barcode_squig,
-                            )
-                        }
+                        new_reads += 1;
+                        read_number += 1;   
+                        generate_read(
+                            &files,
+                            value,
+                            &dist,
+                            &views,
+                            &mut rng,
+                            &mut read_number,
+                            &start_time,
+                            &barcode_squig,
+                        )
+                        
                     }
                 }
                 let _end = now.elapsed().as_secs_f64();
