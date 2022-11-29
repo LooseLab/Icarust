@@ -1,6 +1,6 @@
 output_path = "/tmp/"
-reacquisition = 0.06
-die = 0.0001
+target_yield = 100000000000
+working_pore_percent = 85
 
 [parameters]
 sample_name = "test"

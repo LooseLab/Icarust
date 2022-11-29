@@ -14,17 +14,19 @@
 /// The module pertaining the CLI code
 pub mod cli;
 mod impl_services;
+mod reacquisition_distribution;
 #[macro_use]
 extern crate log;
 
+mod read_length_distribution;
 /// Import all our definied services
 mod services;
 
 use chrono::prelude::*;
 use clap::Parser;
 use configparser::ini::Ini;
-use rand_distr::Gamma;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -51,6 +53,9 @@ use crate::services::minknow_api::manager::manager_service_server::ManagerServic
 use crate::services::minknow_api::manager::FlowCellPosition;
 use crate::services::minknow_api::protocol::protocol_service_server::ProtocolServiceServer;
 
+use crate::reacquisition_distribution::{DeathChance, _calculate_death_chance};
+use crate::read_length_distribution::ReadLengthDist;
+
 #[derive(Deserialize, Debug, Clone)]
 struct Config {
     parameters: Parameters,
@@ -58,19 +63,46 @@ struct Config {
     output_path: std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     random_seed: Option<u64>,
-    reacquisition: Option<f64>,
-    die: Option<f64>,
+    target_yield: f64,
+    working_pore_percent: Option<usize>,
 }
 
 impl Config {
-    /// Check if a global mean read length has been set
-    pub fn has_global_length(&self) -> bool {
-        let has_len = match self.global_mean_read_length {
-            Some(_) => true,
-            None => false,
-        };
-        has_len
+    pub fn get_working_pore_precent(&self) -> usize {
+        match self.working_pore_percent {
+            Some(wpp) => wpp,
+            None => 90,
+        }
     }
+
+    /// Calculate the chance a pore will die.
+    pub fn calculate_death_chance(&self, starting_channels: usize) -> HashMap<String, DeathChance> {
+        let target_yield = &self.target_yield;
+        let mut deaths = HashMap::new();
+        for sample in &self.sample {
+            let mean_read_len = match sample.mean_read_length {
+                Some(rl) => rl,
+                None => match self.global_mean_read_length {
+                    Some(rl) => rl,
+                    None => {
+                        panic!("Sample {} does not have a mean read length and no global read length is set.", sample.input_genome.display());
+                    }
+                },
+            };
+            let name = &sample.name;
+            let death = DeathChance {
+                base_chance: _calculate_death_chance(
+                    starting_channels as f64,
+                    *target_yield,
+                    mean_read_len,
+                ),
+                mean_read_length: mean_read_len,
+            };
+            deaths.insert(name.clone(), death);
+        }
+        deaths
+    }
+
     /// Get the usize version of the run duration so we can stop running if we exceed it.
     /// If not set a default value of 4800 is returned
     pub fn get_experiment_duration_set(&self) -> usize {
@@ -137,12 +169,12 @@ struct Parameters {
     experiment_duration_set: Option<usize>,
     device_id: String,
     position: String,
-    chunk_size_ms: Option<u64>,
+    break_read_ms: Option<u64>,
 }
 
 impl Parameters {
     pub fn get_chunk_size_ms(&self) -> u64 {
-        match self.chunk_size_ms {
+        match self.break_read_ms {
             Some(ms) => ms,
             None => 400,
         }
@@ -163,10 +195,10 @@ struct Sample {
 }
 
 impl Sample {
-    pub fn get_read_len_dist(&self, global_read_len: Option<f64>) -> Gamma<f64> {
+    pub fn get_read_len_dist(&self, global_read_len: Option<f64>) -> ReadLengthDist {
         match self.mean_read_length {
-            Some(mrl) => Gamma::new(mrl / 450.0 * 4000.0, 1.0).unwrap(),
-            None => Gamma::new(global_read_len.unwrap() / 450.0 * 4000.0, 1.0).unwrap(),
+            Some(mrl) => ReadLengthDist::new(mrl / 450.0 * 4000.0),
+            None => ReadLengthDist::new(global_read_len.unwrap() / 450.0 * 4000.0),
         }
     }
     pub fn is_amplicon(&self) -> bool {
@@ -250,6 +282,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         flowcell_id,
         run_id[0..9].to_string(),
     ));
+
+    // Calulate death chance
 
     // Create the manager server and add the service to it
     let manager_init = Manager {
