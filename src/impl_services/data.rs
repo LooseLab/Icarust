@@ -1147,7 +1147,7 @@ impl DataService for DataServiceServicer {
         let channel_size = get_channel_size();
         let mut stream_counter = 1;
         let break_chunk_ms = &self.break_chunks_ms.clone();
-        let chunk_size = break_chunk_ms / 1000 * 4000;
+        let chunk_size = *break_chunk_ms as f64 / 1000.0 * 4000.0;
         // Generous 400 bases a second so we send back maximum chunks of 1000kb worth of signal
         let max_chunk_response_size: usize = 1000  / 400 * 4000;
         // Stream the responses back
