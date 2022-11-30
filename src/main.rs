@@ -260,8 +260,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_identity = Identity::from_pem(cert, key);
     let tls = ServerTlsConfig::new().identity(server_identity);
     let tls_position = tls.clone();
-    println!("localhost:{}", m_port);
-    println!("localhost:{}", a_port);
     // Set the positions that we will be serving on
     let addr_manager = format!("127.0.0.1:{}", m_port).parse().unwrap();
     let addr_position: SocketAddr = format!("127.0.0.1:{}", a_port).parse().unwrap();
@@ -283,8 +281,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_id[0..9].to_string(),
     ));
 
-    // Calulate death chance
-
+    let channel_size: usize = software_config
+    .getint("SEQUENCER", "channels")
+    .unwrap()
+    .expect("Error reading channel size from config.ini.")
+    .try_into()
+    .unwrap();
     // Create the manager server and add the service to it
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
@@ -295,7 +297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 secure_grpc_web: 420,
             }),
             protocol_state: 1,
-            error_info: "Unknown state, please help".to_string(),
+            error_info: "Help me I'm trapped in the computer".to_string(),
             shared_hardware_group: Some(SharedHardwareGroup { group_id: 1 }),
             is_integrated: true,
             can_sequence_offline: true,
@@ -318,7 +320,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_svc = LogServiceServer::new(Log {});
     let instance_svc = InstanceServiceServer::new(Instance {});
     let analysis_svc = AnalysisConfigurationServiceServer::new(Analysis {});
-    let device_svc = DeviceServiceServer::new(Device {});
+    let device_svc = DeviceServiceServer::new(Device::new(channel_size));
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {
         run_id: run_id.clone(),
     });
@@ -330,6 +332,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_id.clone(),
         args,
         output_path.clone(),
+        channel_size
     ));
 
     Server::builder()

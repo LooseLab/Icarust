@@ -50,7 +50,6 @@ use crate::services::minknow_api::data::{
     get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
-use crate::services::setup_conf::get_channel_size;
 use crate::{Config, Sample, _load_toml};
 
 /// unused
@@ -170,6 +169,7 @@ pub struct DataServiceServicer {
     action_responses: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
     setup: Arc<Mutex<RunSetup>>,
     break_chunks_ms: u64,
+    channel_size: usize
 }
 
 #[derive(Debug, Deserialize)]
@@ -970,12 +970,11 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn new(run_id: String, cli_opts: Cli, output_path: PathBuf) -> DataServiceServicer {
+    pub fn new(run_id: String, cli_opts: Cli, output_path: PathBuf, channel_size: usize) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.config);
         let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
-        let channel_size = get_channel_size();
         let start_time: u64 = Utc::now().timestamp() as u64;
         let barcode_squig = create_barcode_squig_hashmap(&config);
         info!("Barcodes available {:#?}", barcode_squig.keys());
@@ -1022,7 +1021,6 @@ impl DataServiceServicer {
 
                 // get some basic stats about what is going on at each channel
                 let _channels_with_reads = 0;
-                let channel_size = get_channel_size();
                 let mut num = thread_safe.lock().unwrap();
 
                 for i in 0..channel_size {
@@ -1121,6 +1119,7 @@ impl DataServiceServicer {
             action_responses: action_response_safe,
             setup: is_safe_setup,
             break_chunks_ms,
+            channel_size,
         }
     }
 }
@@ -1144,12 +1143,11 @@ impl DataService for DataServiceServicer {
             let tx_unblocks = start_unblock_thread(data_lock_unblock, setup);
             tx_unblocks
         };
-        let channel_size = get_channel_size();
+        let channel_size = self.channel_size;
         let mut stream_counter = 1;
         let break_chunk_ms = &self.break_chunks_ms.clone();
         let chunk_size = *break_chunk_ms as f64 / 1000.0 * 4000.0;
-        // Generous 400 bases a second so we send back maximum chunks of 1000kb worth of signal
-        let max_chunk_response_size: usize = 1000  / 400 * 4000;
+
         // Stream the responses back
         let output = async_stream::try_stream! {
             // Async channel that will await when it ahs one elemnt. This pushes the read response back immediately.
@@ -1169,16 +1167,14 @@ impl DataService for DataServiceServicer {
             tokio::spawn(async move {
                 loop{
                     let now2 = Instant::now();
-                    let mut container: Vec<(usize, ReadData)> = Vec::with_capacity(get_channel_size());
+                    let mut container: Vec<(usize, ReadData)> = Vec::with_capacity(channel_size);
                     // Number of chunks that we will send back
                     let size = channel_size as f64 / 24_f64;
                     let size = size.ceil() as usize;
                     let mut channel: u32 = 1;
                     let mut num_reads_stop_receiving: usize = 0;
                     let mut num_channels_empty: usize = 0;
-                    // magic splitting into 24 reads using a drain like wow magic
-                    let channel_size = get_channel_size();
-
+                    // max read len in samples that we will consider sending samples for
                     let max_read_len_samples: usize = 30000;
 
                     // calculate number of samples to slice - roughly the time we break reads * 4000, so for the default 0.4 seconds
@@ -1225,6 +1221,10 @@ impl DataService for DataServiceServicer {
                                     let chunks_in_width = full_width.div_euclid(chunk_size as usize);
                                     stop = chunk_size as usize * chunks_in_width;
                                     start = stop - chunk_size as usize;
+                                }
+                                // CHeck start is not past end
+                                if start > read_info.read.len() {
+                                    continue
                                 }
 
                                 // Only send back one chunks worth of data

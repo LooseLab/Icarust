@@ -42,9 +42,3 @@ pub mod minknow_api {
         tonic::include_proto!("minknow_api.statistics");
     }
 }
-
-pub mod setup_conf {
-    pub fn get_channel_size() -> usize {
-        3000
-    }
-}
