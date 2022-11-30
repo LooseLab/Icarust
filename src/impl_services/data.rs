@@ -1000,7 +1000,7 @@ impl DataServiceServicer {
         info!("Death chances {:#?}", death_chance);
         // start the thread to generate data
         thread::spawn(move || {
-            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.45, 0.0001, 0.05);
+            let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.0, 0.0001, 0.05);
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
@@ -1084,19 +1084,20 @@ impl DataServiceServicer {
                             continue;
                         }
                         // chance to aquire a read
-                        new_reads += 1;
-                        read_number += 1;   
-                        generate_read(
-                            &files,
-                            value,
-                            &dist,
-                            &views,
-                            &mut rng,
-                            &mut read_number,
-                            &start_time,
-                            &barcode_squig,
-                        )
-                        
+                        if rng.gen_bool(0.8){
+                            new_reads += 1;
+                            read_number += 1;   
+                            generate_read(
+                                &files,
+                                value,
+                                &dist,
+                                &views,
+                                &mut rng,
+                                &mut read_number,
+                                &start_time,
+                                &barcode_squig,
+                            )
+                        }       
                     }
                 }
                 let _end = now.elapsed().as_secs_f64();
@@ -1145,8 +1146,8 @@ impl DataService for DataServiceServicer {
         };
         let channel_size = self.channel_size;
         let mut stream_counter = 1;
-        let break_chunk_ms = &self.break_chunks_ms.clone();
-        let chunk_size = *break_chunk_ms as f64 / 1000.0 * 4000.0;
+        let break_chunk_ms = self.break_chunks_ms.clone();
+        let chunk_size = break_chunk_ms as f64 / 1000.0 * 4000.0;
 
         // Stream the responses back
         let output = async_stream::try_stream! {
@@ -1221,6 +1222,9 @@ impl DataService for DataServiceServicer {
                                     let chunks_in_width = full_width.div_euclid(chunk_size as usize);
                                     stop = chunk_size as usize * chunks_in_width;
                                     start = stop - chunk_size as usize;
+                                    if start > read_info.read.len() {
+                                        start = read_info.read.len() - 1000;
+                                    }
                                 }
                                 // CHeck start is not past end
                                 if start > read_info.read.len() {
@@ -1233,6 +1237,9 @@ impl DataService for DataServiceServicer {
                                 read_info.time_accessed = now_time;
                                 read_info.prev_chunk_start = stop;
                                 let read_chunk = read_info.read[start..stop].to_vec();
+                                if read_chunk.len() > 300 {
+                                    continue
+                                }
                                 container.push((read_info.channel, ReadData{
                                         id: read_info.read_id.clone(),
                                         number: read_info.read_number.clone(),
@@ -1266,7 +1273,7 @@ impl DataService for DataServiceServicer {
                         channel_data.clear();
                     }
                     container.clear();
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(break_chunk_ms));
                 }
 
             });
