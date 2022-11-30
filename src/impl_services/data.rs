@@ -1075,6 +1075,8 @@ impl DataServiceServicer {
                             );
                         }
                         value.read.clear();
+                        // shrink the vec allocation to new empty status
+                        value.read.shrink_to_fit();
                         value.was_unblocked = false;
                         // Could be a slow problem here?
                         value.write_out = false;
