@@ -1239,7 +1239,8 @@ impl DataService for DataServiceServicer {
                                 read_info.time_accessed = now_time;
                                 read_info.prev_chunk_start = stop;
                                 let read_chunk = read_info.read[start..stop].to_vec();
-                                if read_chunk.len() > 300 {
+                                // Chunk is too short 
+                                if read_chunk.len() < 300 {
                                     continue
                                 }
                                 container.push((read_info.channel, ReadData{
