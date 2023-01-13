@@ -389,6 +389,9 @@ fn start_write_out_thread(
                             new_end = min(stop, to_write_info.read.len());
                         }
                         let signal = to_write_info.read[0..new_end].to_vec();
+                        if signal.is_empty(){
+                            continue
+                        };
                         let raw_attrs = HashMap::from([
                             ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
                             (
