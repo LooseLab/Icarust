@@ -264,8 +264,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tls = ServerTlsConfig::new().identity(server_identity);
     let tls_position = tls.clone();
     // Set the positions that we will be serving on
-    let addr_manager = format!("127.0.0.1:{}", m_port).parse().unwrap();
-    let addr_position: SocketAddr = format!("127.0.0.1:{}", a_port).parse().unwrap();
+    let addr_manager = format!("[::0]:{}", m_port).parse().unwrap();
+    let addr_position: SocketAddr = format!("[::0]:{}", a_port).parse().unwrap();
     // Randomly generate a run id
     let run_id = Uuid::new_v4().to_string().replace('-', "");
     let sample_id = config.parameters.sample_name.clone();

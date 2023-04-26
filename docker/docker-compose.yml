@@ -1,7 +1,7 @@
 version: "3.8"
 services:
   icarust:
-    image: adoni5/icarust
+    image: adoni5/icarust:latest
     init: true
     build:
       context: ..
