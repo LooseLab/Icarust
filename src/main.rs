@@ -234,12 +234,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     args.set_logging();
     args.check_config_exists();
     // Parse the config to load all the samples
-    let config = _load_toml(&args.config);
+    let config = _load_toml(&args.simulation_profile);
     config.check_fields();
 
-    // Read the config.ini to get the TLS and ports
+    // Read the config.ini to get the TLS and ports and number of channels
     let mut software_config = Ini::new();
-    software_config.load("config.ini")?;
+    let default_config_path = &PathBuf::from("config.ini");
+    let config_ini_path: &PathBuf = args.config_ini.as_ref().unwrap_or(&default_config_path);
+    software_config.load(config_ini_path)?;
 
     let m_port = software_config
         .getint("PORTS", "manager")
@@ -254,8 +256,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .get("TLS", "cert-dir")
             .expect("Tls cert dir not found in config.ini"),
     ); // Setup the TLS certifcates using the Minknow TLS certs
-    let cert =
-        tokio::fs::read(format!("{}", tls_cert_path.join("localhost.crt").display())).await?;
+    let cert = tokio::fs::read(format!("{}", tls_cert_path.join("localhost.crt").display()))
+        .await
+        .expect("No TLS certs found");
     let key = tokio::fs::read(format!("{}", tls_cert_path.join("localhost.key").display())).await?;
     let server_identity = Identity::from_pem(cert, key);
     let tls = ServerTlsConfig::new().identity(server_identity);
@@ -282,11 +285,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ));
 
     let channel_size: usize = software_config
-    .getint("SEQUENCER", "channels")
-    .unwrap()
-    .expect("Error reading channel size from config.ini.")
-    .try_into()
-    .unwrap();
+        .getint("SEQUENCER", "channels")
+        .unwrap()
+        .expect("Error reading channel size from config.ini.")
+        .try_into()
+        .unwrap();
     // Create the manager server and add the service to it
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
@@ -332,7 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_id.clone(),
         args,
         output_path.clone(),
-        channel_size
+        channel_size,
     ));
 
     Server::builder()

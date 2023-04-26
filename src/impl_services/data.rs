@@ -296,7 +296,7 @@ fn start_write_out_thread(
         let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
-        let config = _load_toml(&x.config);
+        let config = _load_toml(&x.simulation_profile);
         let experiment_duration = config.get_experiment_duration_set().to_string();
         // std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
         let context_tags = HashMap::from([
@@ -975,7 +975,7 @@ fn generate_read(
 impl DataServiceServicer {
     pub fn new(run_id: String, cli_opts: Cli, output_path: PathBuf, channel_size: usize) -> DataServiceServicer {
         let now = Instant::now();
-        let config = _load_toml(&cli_opts.config);
+        let config = _load_toml(&cli_opts.simulation_profile);
         let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
         let start_time: u64 = Utc::now().timestamp() as u64;
