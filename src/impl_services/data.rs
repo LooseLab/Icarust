@@ -685,6 +685,10 @@ impl<P: AsRef<Path>> FileExtension for P {
             ".fna.gz",
             ".fsa.gz",
             ".fa.gz",
+            ".fastq",
+            ".fq",
+            ".fastq.gz",
+            ".fq.gz",
         ]);
     }
 }

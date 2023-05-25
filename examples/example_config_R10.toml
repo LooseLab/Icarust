@@ -1,9 +1,9 @@
-output_path = "/tmp" # Path to write output fast5 to
+output_path = "/tmp"
 global_mean_read_length = 20000 #optional
 random_seed = 10
 target_yield = 100000000
 working_pore_percent = 90 # optional (default 85)
-pore_type = "R9" #Optional, one of R10 or R9, default R9
+pore_type = "R10" #Optional, one of R10 or R9, default R9
 
 [parameters]
 sample_name = "my_sample_name"
@@ -16,10 +16,10 @@ break_read_ms = 1000 # optional,, default 400
 
 [[sample]]
 name = "Sample1"
-input_genome = "/path/to/genome/squiggle.npy" # Path to (directory of) pregenerated squiggle file(s)
+input_genome = "/path/to/genome/reference.fasta"  # Path to (directory of) FASTA file(s)
 mean_read_length = 40000.0
 weight = 1
-weights_files = ["/path/to/distribution_file_1.json"] #optional
+weights_files = ["/path/to/distribution_file_1.json", "/path/to/distribution_file_2.json"] #optional
 amplicon = false # Not a PCR based run # optional
 barcodes = ["Barcode01", "Barcode02"] # optional
 barcode_weights = [1,2] # Optional
@@ -27,10 +27,10 @@ uneven = false # Optional
 
 [[sample]]
 name = "Sample2"
-input_genome = "/path/to/genome_suiggles/" # Contains 2 squiggles
+input_genome = "/path/to/genome/squiggle.npy"
 mean_read_length = 40000.0
 weight = 1
-weights_files = ["/path/to/distribution_file_1.json", "/path/to/distribution_file_2.json"] #optional - must match number of files represented in `input_genome`
+weights_files = ["/path/to/distribution_file_1.json", "/path/to/distrrbution_file_2.json"] #optional
 amplicon = false # Not a PCR based run # optional
 barcodes = ["Barcode03", "Barcode04"] # optional
 barcode_weights = [1,2] # Optional
