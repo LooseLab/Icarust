@@ -1,5 +1,6 @@
 #![deny(missing_docs)]
 #![deny(missing_doc_code_examples)]
+#![allow(clippy::too_many_arguments)]
 //! This module contains all the code to create a new DataServiceServicer, which spawns a data generation thread that acts an approximation of a sequencer.
 //! It has a few issues, but should serve it's purpose. Basically the bread and butter of this server implementation, should be readfish compatibile.
 //!
@@ -12,12 +13,13 @@
 //!
 //!
 use futures::{Stream, StreamExt};
+use needletail::{parse_fastx_file, FastxReader};
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{create_dir_all, File, DirEntry};
+use std::fs::{create_dir_all, read_to_string, DirEntry, File};
 use std::mem;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
@@ -32,6 +34,7 @@ use frust5_api::*;
 use memmap2::Mmap;
 use ndarray::{s, Array1, ArrayBase, ArrayView1, Dim, ViewRepr};
 use ndarray_npy::{read_npy, ReadNpyError, ViewNpyExt};
+
 use rand::distributions::WeightedIndex;
 use rand::prelude::*;
 use rand_distr::{Distribution, SkewNormal};
@@ -40,6 +43,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::cli::Cli;
+use crate::r10_simulation as r10_sim;
 use crate::reacquisition_distribution::{ReacquisitionPoisson, SampleDist};
 use crate::read_length_distribution::ReadLengthDist;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -50,6 +54,7 @@ use crate::services::minknow_api::data::{
     get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
+use crate::PoreType;
 use crate::{Config, Sample, _load_toml};
 
 /// unused
@@ -64,17 +69,23 @@ struct RunSetup {
 /// Stores the view and total length of a squiggle NPY file
 struct FileInfo {
     contig_len: usize,
-    view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>,
+    view: Option<ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>>,
+    sequence: Option<Vec<i16>>,
 }
 
 impl FileInfo {
     pub fn new(
-        length: usize,
-        view: ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>,
+        view: Option<ArrayBase<ndarray::OwnedRepr<i16>, Dim<[usize; 1]>>>,
+        sequence: Option<Vec<i16>>,
     ) -> FileInfo {
+        let array_len = match view {
+            Some(_) => view.as_ref().unwrap().len(),
+            None => sequence.as_ref().unwrap().len(),
+        };
         FileInfo {
-            contig_len: length,
+            contig_len: array_len,
             view,
+            sequence,
         }
     }
 }
@@ -84,10 +95,12 @@ impl fmt::Debug for FileInfo {
             f,
             "{{\n
         Contig_length: {}
+        Has Sequence: {}
         Has View: {}
         }}",
             self.contig_len,
-            self.view.is_empty()
+            self.view.is_some(),
+            self.sequence.is_some()
         )
     }
 }
@@ -102,6 +115,8 @@ struct SampleInfo {
     is_amplicon: bool,
     is_barcoded: bool,
     file_weights: Vec<WeightedIndex<usize>>,
+    /// We use this to determine whether we are reading signal ot Sequence from the file info (R10 -> Sequence)
+    pore_type: PoreType,
 }
 impl fmt::Debug for SampleInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -123,7 +138,6 @@ impl fmt::Debug for SampleInfo {
             self.files,
             self.is_amplicon,
             self.file_weights
-
         )
     }
 }
@@ -136,6 +150,7 @@ impl SampleInfo {
         is_amplicon: bool,
         is_barcoded: bool,
         read_len_dist: ReadLengthDist,
+        pore_type: PoreType,
     ) -> SampleInfo {
         SampleInfo {
             name,
@@ -147,6 +162,7 @@ impl SampleInfo {
             is_amplicon,
             is_barcoded,
             file_weights: vec![],
+            pore_type,
         }
     }
 }
@@ -169,7 +185,7 @@ pub struct DataServiceServicer {
     action_responses: Arc<Mutex<Vec<get_live_reads_response::ActionResponse>>>,
     setup: Arc<Mutex<RunSetup>>,
     break_chunks_ms: u64,
-    channel_size: usize
+    channel_size: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -272,12 +288,12 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
 fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError> {
     info!("Fetching barcode squiggle for barcode {}", barcode);
     let barcode_arr_1: Array1<i16> = read_npy(format!(
-        "python/barcoding/squiggle/{}_1.squiggle.npy",
+        "static/barcode_squiggle/{}_1.squiggle.npy",
         barcode
     ))?;
     let barcode_arr_1: Vec<i16> = barcode_arr_1.to_vec();
     let barcode_arr_2: Array1<i16> = read_npy(format!(
-        "python/barcoding/squiggle/{}_2.squiggle.npy",
+        "static/barcode_squiggle/{}_2.squiggle.npy",
         barcode
     ))?;
     let barcode_arr_2: Vec<i16> = barcode_arr_2.to_vec();
@@ -289,9 +305,11 @@ fn start_write_out_thread(
     run_id: String,
     config: Cli,
     output_path: PathBuf,
+    write_out_gracefully: Arc<Mutex<bool>>,
 ) -> SyncSender<ReadInfo> {
     let (complete_read_tx, complete_read_rx) = sync_channel(8000);
-    let x = config.clone();
+    let x = config;
+
     thread::spawn(move || {
         let mut read_infos: Vec<ReadInfo> = Vec::with_capacity(8000);
         let exp_start_time = Utc::now();
@@ -364,80 +382,91 @@ fn start_write_out_thread(
         loop {
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
-                if read_infos.len() >= 4000 {
-                    let fast5_file_name = format!(
-                        "{}/{}_pass_{}_{}.fast5",
-                        &output_dir.display(),
-                        config.parameters.flowcell_name,
-                        &run_id[0..6],
-                        file_counter
-                    );
-                    info!("Writing out file to {}", fast5_file_name);
-                    // drain 4000 reads and write them into a FAST5 file
-                    let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
-                    for to_write_info in read_infos.drain(..4000) {
-                        // skip this read if we are trying to write it out twice
-                        if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
-                            continue;
-                        }
-                        let mut new_end = to_write_info.read.len();
-                        if to_write_info.was_unblocked {
-                            let unblock_time = to_write_info.time_unblocked;
-                            let prev_time = to_write_info.start_time_utc;
-                            let elapsed_time = unblock_time.time() - prev_time.time();
-                            let stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
-                            new_end = min(stop, to_write_info.read.len());
-                        }
-                        let signal = to_write_info.read[0..new_end].to_vec();
-                        if signal.is_empty(){
-                            continue
-                        };
-                        let raw_attrs = HashMap::from([
-                            ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
-                            (
-                                "end_reason",
-                                RawAttrsOpts::EndReason(to_write_info.end_reason),
-                            ),
-                            ("median_before", RawAttrsOpts::MedianBefore(100.0)),
-                            (
-                                "read_id",
-                                RawAttrsOpts::ReadId(to_write_info.read_id.as_str()),
-                            ),
-                            (
-                                "read_number",
-                                RawAttrsOpts::ReadNumber(to_write_info.read_number as i32),
-                            ),
-                            ("start_mux", RawAttrsOpts::StartMux(to_write_info.start_mux)),
-                            (
-                                "start_time",
-                                RawAttrsOpts::StartTime(to_write_info.start_time),
-                            ),
-                        ]);
-                        let channel_info = ChannelInfo::new(
-                            8192_f64,
-                            6.0,
-                            1500.0,
-                            4000.0,
-                            to_write_info.channel_number.clone(),
-                        );
-                        multi
-                            .create_empty_read(
-                                to_write_info.read_id.clone(),
-                                run_id.clone(),
-                                &tracking_id,
-                                &context_tags,
-                                channel_info,
-                                &raw_attrs,
-                                signal,
-                            )
-                            .unwrap();
+            }
+            let z = { *write_out_gracefully.lock().unwrap() };
+
+            // this isn't perfect. if we are finsihing up a run and have more than 4000 reads waiting to be written out, we will lose the excess reads over 4000
+            if read_infos.len() >= 4000 || z {
+                let fast5_file_name = format!(
+                    "{}/{}_pass_{}_{}.fast5",
+                    &output_dir.display(),
+                    config.parameters.flowcell_name,
+                    &run_id[0..6],
+                    file_counter
+                );
+                // drain 4000 reads and write them into a FAST5 file
+                let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
+                info!("Writing out file to {}", fast5_file_name);
+                let range_end = std::cmp::min(4000, read_infos.len());
+                for to_write_info in read_infos.drain(..range_end) {
+                    // skip this read if we are trying to write it out twice
+                    if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
+                        continue;
                     }
-                    file_counter += 1;
-                    read_numbers_seen.clear();
+                    let mut new_end = to_write_info.read.len();
+                    if to_write_info.was_unblocked {
+                        let unblock_time = to_write_info.time_unblocked;
+                        let prev_time = to_write_info.start_time_utc;
+                        let elapsed_time = unblock_time.time() - prev_time.time();
+                        let stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
+                        new_end = min(stop, to_write_info.read.len());
+                    }
+                    let signal = to_write_info.read[0..new_end].to_vec();
+                    debug!("{to_write_info:#?}");
+                    if signal.is_empty() {
+                        continue;
+                    };
+                    let raw_attrs: HashMap<&str, RawAttrsOpts> = HashMap::from([
+                        ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
+                        (
+                            "end_reason",
+                            RawAttrsOpts::EndReason(to_write_info.end_reason),
+                        ),
+                        ("median_before", RawAttrsOpts::MedianBefore(100.0)),
+                        (
+                            "read_id",
+                            RawAttrsOpts::ReadId(to_write_info.read_id.as_str()),
+                        ),
+                        (
+                            "read_number",
+                            RawAttrsOpts::ReadNumber(to_write_info.read_number as i32),
+                        ),
+                        ("start_mux", RawAttrsOpts::StartMux(to_write_info.start_mux)),
+                        (
+                            "start_time",
+                            RawAttrsOpts::StartTime(to_write_info.start_time),
+                        ),
+                    ]);
+                    let channel_info = ChannelInfo::new(
+                        8192_f64,
+                        6.0,
+                        1500.0,
+                        4000.0,
+                        to_write_info.channel_number.clone(),
+                    );
+                    multi
+                        .create_empty_read(
+                            to_write_info.read_id.clone(),
+                            run_id.clone(),
+                            &tracking_id,
+                            &context_tags,
+                            channel_info,
+                            &raw_attrs,
+                            signal,
+                        )
+                        .unwrap();
+                }
+                file_counter += 1;
+                read_numbers_seen.clear();
+            }
+            {
+                if *write_out_gracefully.lock().unwrap() {
+                    break;
                 }
             }
             thread::sleep(Duration::from_millis(1));
         }
+        info!("exiting write out thread");
     });
     complete_read_tx
 }
@@ -619,6 +648,47 @@ fn stop_sending_read(
     )
 }
 
+pub trait FileExtension {
+    fn has_extension<S: AsRef<str>>(&self, extensions: &[S]) -> bool;
+    fn is_fasta(&self) -> bool;
+}
+
+impl<P: AsRef<Path>> FileExtension for P {
+    fn has_extension<S: AsRef<str>>(&self, extensions: &[S]) -> bool {
+        return extensions.iter().any(|x| {
+            debug!(
+                "Extension being checked: {} Against {:#?}, {:#?}",
+                x.as_ref(),
+                self.as_ref(),
+                self.as_ref()
+                    .as_os_str()
+                    .to_str()
+                    .unwrap()
+                    .ends_with(x.as_ref())
+            );
+            self.as_ref()
+                .as_os_str()
+                .to_str()
+                .unwrap()
+                .ends_with(x.as_ref())
+        });
+    }
+
+    fn is_fasta(&self) -> bool {
+        info!("{:#?}", &self.as_ref());
+        return self.as_ref().has_extension(&[
+            ".fasta",
+            ".fna",
+            ".fsa",
+            ".fa",
+            ".fasta.gz",
+            ".fna.gz",
+            ".fsa.gz",
+            ".fa.gz",
+        ]);
+    }
+}
+
 /// Read the config file and parse the sample fields. This then returns any necessary Sample infos, setup
 /// according to the structure of the run. This structure changes based on whether the sample is barcoded, amplicons based and has provided weights.
 fn process_samples_from_config(
@@ -628,10 +698,19 @@ fn process_samples_from_config(
     // and is then mutated by accessing the hashmap.
     let mut views: HashMap<String, SampleInfo> = HashMap::new();
     // iterate all the samples listed in the config directory and fetch their relative weights
-    let sample_weights = read_sample_distribution(&config);
+    let sample_weights = read_sample_distribution(config);
     // Seeded rng for generated weighted dists
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(config.get_rand_seed());
-
+    let kmer_string =
+        read_to_string("static/r10_squig_model.tsv").expect("Failed to read kmers to string");
+    let kmers = match config.check_pore_type() {
+        PoreType::R10 => {
+            let (_, kmer_hashmap) =
+                r10_sim::parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
+            Some(kmer_hashmap)
+        }
+        PoreType::R9 => None,
+    };
     // Now iterate all the samples and setup any required fields for the type of run wie have. Possible combos:
     //      Amplicon barcoded
     //      Amplicon unbarcoded
@@ -640,25 +719,31 @@ fn process_samples_from_config(
     for sample in &config.sample {
         // if the given sample input genome is actually a directory
         if sample.input_genome.is_dir() {
-            let mut t: Vec<DirEntry> = sample.input_genome.read_dir().expect("read_dir call failed").into_iter().map(|x| x.unwrap()).collect();
-            t.sort_by(|a, b| a.path().cmp(&b.path()));
-            for entry in t
-            {
+            let mut t: Vec<DirEntry> = sample
+                .input_genome
+                .read_dir()
+                .expect("read_dir call failed")
+                .map(|x| x.unwrap())
+                .collect();
+            t.sort_by_key(|a| a.path());
+            for entry in t {
                 // only read files that are .npy squiggle
-                if entry
-                    .path()
-                    .extension()
-                    .unwrap()
-                    .to_str()
-                    .unwrap()
-                    == "npy"
-                {
+                if entry.path().extension().unwrap().to_str().unwrap() == "npy" {
                     info!("Reading view for{:#?}", entry.path());
-                    read_views_of_data(
+                    read_views_of_squiggle_data(
                         &mut views,
                         &entry.path().clone(),
                         config.global_mean_read_length,
                         sample,
+                    );
+                } else if entry.path().is_fasta() {
+                    info!("Reading view of sequence for {:#?}", entry.path());
+                    read_views_of_sequence_data(
+                        &mut views,
+                        &sample.input_genome.clone(),
+                        config.global_mean_read_length,
+                        sample,
+                        kmers.as_ref().unwrap(),
                     );
                 }
             }
@@ -697,17 +782,27 @@ fn process_samples_from_config(
             }
         // only a path to a single file has been passed
         } else {
-            read_views_of_data(
-                &mut views,
-                &sample.input_genome.clone(),
-                config.global_mean_read_length,
-                sample,
-            );
-
-            // Time for barcoding shenanigans
-            let sample_info = views.get_mut(&sample.name).unwrap();
+            debug!("{:#?}", sample);
+            if sample.input_genome.is_fasta() {
+                read_views_of_sequence_data(
+                    &mut views,
+                    &sample.input_genome.clone(),
+                    config.global_mean_read_length,
+                    sample,
+                    kmers.as_ref().unwrap(),
+                );
+            } else {
+                read_views_of_squiggle_data(
+                    &mut views,
+                    &sample.input_genome.clone(),
+                    config.global_mean_read_length,
+                    sample,
+                );
+            }
             // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
             // so we only ever see this file when we generate a read
+            let sample_info = views.get_mut(&sample.name).unwrap();
+            // Time for barcoding shenanigans
             sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
             let mut barcode_dists = None;
             if sample.is_barcoded() {
@@ -720,7 +815,6 @@ fn process_samples_from_config(
             sample_info.barcode_weights = barcode_dists;
         }
     }
-    info!("{:#?}", views);
     (views, sample_weights)
 }
 
@@ -759,7 +853,7 @@ fn generate_barcode_weights(
     randay: &mut rand::rngs::StdRng,
     num_barcodes: usize,
 ) -> WeightedIndex<usize> {
-    let barcode_weigths_dist = match barcode_weights {
+    match barcode_weights {
         Some(weights_vec) => WeightedIndex::new(weights_vec).unwrap(),
         // No weights provided so we will generate some using the random seed provided
         None => {
@@ -769,8 +863,7 @@ fn generate_barcode_weights(
             }
             WeightedIndex::new(&weights).unwrap()
         }
-    };
-    barcode_weigths_dist
+    }
 }
 
 /// Iterate the samples in the config toml and load the weights in
@@ -782,26 +875,80 @@ fn read_sample_distribution(config: &Config) -> WeightedIndex<usize> {
     WeightedIndex::new(&weights).unwrap()
 }
 
-/// Iterate the samples given as the input genome path listed in the config. If it is a directory - insert a view for each squiggle file in the directory. N.B This is used for amplicon based genomes.
-/// Wraps reads_views_of_data
-// fn read_genome_dir_or_file (
-//     config: Config
-// ) -> HashMap<String, SampleInfo> {
-
-// }
+/// Mutably creates the views into the sequence for a given sample
+///
+///
+fn read_views_of_sequence_data(
+    views: &mut HashMap<String, SampleInfo>,
+    file_path: &std::path::PathBuf,
+    global_mean_read_length: Option<f64>,
+    sample_info: &Sample,
+    kmers: &HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
+) {
+    info!(
+        "Reading sequence information for {:#?} for sample {:#?} MAY TAKE SOME TIME",
+        file_path.file_name(),
+        sample_info
+    );
+    // lazy but cba to pass through
+    let profile = r10_sim::get_sim_profile(r10_sim::SimType::PromR10Dna);
+    let mut reader: Box<dyn FastxReader> =
+        parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
+    let mut num_seq: usize = 0;
+    while reader.next().is_some() {
+        num_seq += 1;
+    }
+    info!("Simulating for {num_seq} sequences");
+    let mut reader: Box<dyn FastxReader> =
+        parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
+    let now = Instant::now();
+    let mut done = 0;
+    while let Some(record) = reader.next() {
+        let fasta_record = record.unwrap();
+        info!(
+            "Converting {}",
+            String::from_utf8(fasta_record.id().to_vec()).unwrap()
+        );
+        let size = fasta_record.num_bases();
+        let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
+        let file_info = FileInfo::new(
+            None,
+            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
+        );
+        let sample = views
+            .entry(sample_info.name.clone())
+            .or_insert(SampleInfo::new(
+                sample_info.name.clone(),
+                sample_info.barcodes.clone(),
+                sample_info.uneven,
+                sample_info.is_amplicon(),
+                sample_info.is_barcoded(),
+                read_length_dist,
+                PoreType::R10,
+            ));
+        sample.files.push(file_info);
+        done += 1;
+        info!(
+            "Finished converting {done} of {num_seq} in {}",
+            now.elapsed().as_secs_f64()
+        );
+    }
+    let _end = now.elapsed().as_secs_f64();
+    println!("Read into squiggle in {}", _end);
+}
 
 /// Creates Memory mapped views of the precalculated numpy arrays of squiggle for reference genomes, generated by make_squiggle.py
 ///
-/// Returns a Hashmap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
+/// The views are placed in a HashMap, keyed to the genome name that is accessed to pull a "read" (A slice of this "squiggle" array)
 /// The value is in a Tuple - in order it contains the length of the squiggle array, the memory mapped view and a Gamma distribution to draw
-fn read_views_of_data(
+fn read_views_of_squiggle_data(
     views: &mut HashMap<String, SampleInfo>,
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
 ) {
     info!(
-        "Reading information for {:#?} for sample {:#?}",
+        "Reading squiggle information for {:#?} for sample {:#?}",
         file_info.file_name(),
         sample_info
     );
@@ -811,7 +958,7 @@ fn read_views_of_data(
         ArrayView1::<i16>::view_npy(&mmap).unwrap();
     let size = view.shape()[0];
     let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
-    let file_info = FileInfo::new(size, view.to_owned());
+    let file_info = FileInfo::new(Some(view.to_owned()), None);
     let sample = views
         .entry(sample_info.name.clone())
         .or_insert(SampleInfo::new(
@@ -821,13 +968,13 @@ fn read_views_of_data(
             sample_info.is_amplicon(),
             sample_info.is_barcoded(),
             read_length_dist,
+            PoreType::R9,
         ));
     sample.files.push(file_info)
 }
 
 /// Convert an elapased period of time in milliseconds tinto samples
-///
-///
+
 fn convert_milliseconds_to_samples(milliseconds: i64) -> usize {
     (milliseconds * 4) as usize
 }
@@ -887,7 +1034,7 @@ fn setup_channel_vec(
 
 /// Generate an inital read, which is stored as a ReadInfo in the channel_read_info vec. This is mutated in place.
 fn generate_read(
-    samples: &Vec<String>,
+    samples: &[String],
     value: &mut ReadInfo,
     dist: &WeightedIndex<usize>,
     views: &HashMap<String, SampleInfo>,
@@ -911,7 +1058,7 @@ fn generate_read(
     value.read_number = *read_number;
     let sample_choice: &String = &samples[dist.sample(rng)];
     value.read_sample_name = sample_choice.clone();
-    let sample_info = &views[sample_choice];
+    let sample_info: &SampleInfo = &views[sample_choice];
     // choose a barcode if we need to - else we always use the first distirbution in the vec
     let mut file_weight_choice: usize = 0;
     let mut barcode = None;
@@ -942,14 +1089,35 @@ fn generate_read(
     // earliest possible start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {
         true => 0,
-        false => rng.gen_range(0..file_info.contig_len - 1000) as usize,
+        false => rng.gen_range(0..file_info.contig_len - 1000),
     };
     // Get our distribution from either the Sample specified Gamma or the global read length
     let read_distribution = &sample_info.read_len_dist;
     let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
     let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
-    let mut base_squiggle = file_info.view.slice(s![start..end]).to_vec();
+    let mut base_squiggle = match sample_info.pore_type {
+        PoreType::R9 => file_info
+            .view
+            .as_ref()
+            .expect("Error unwraping signal view")
+            .slice(s![start..end])
+            .to_vec(),
+        PoreType::R10 => {
+            // generate a prefix
+            let mut prefix = r10_sim::generate_prefix().expect("NO PREFIX BAD");
+            //  read the signal here
+            return prefix.extend(
+                file_info
+                    .sequence
+                    .as_ref()
+                    .expect("Couldn't get my hands on that tasty tasty signal")
+                    [start..end]
+                    .to_vec(),
+            );
+        }
+    };
+
     // Barcode name has been provided for this sample
     if sample_info.is_barcoded {
         let (mut barcode_1_squig, mut barcode_2_squig) =
@@ -973,9 +1141,16 @@ fn generate_read(
 }
 
 impl DataServiceServicer {
-    pub fn new(run_id: String, cli_opts: Cli, output_path: PathBuf, channel_size: usize) -> DataServiceServicer {
+    pub fn new(
+        run_id: String,
+        cli_opts: Cli,
+        output_path: PathBuf,
+        channel_size: usize,
+        graceful_shutdown: Arc<Mutex<bool>>,
+    ) -> DataServiceServicer {
         let now = Instant::now();
         let config = _load_toml(&cli_opts.simulation_profile);
+
         let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
         let start_time: u64 = Utc::now().timestamp() as u64;
@@ -992,8 +1167,10 @@ impl DataServiceServicer {
         let is_safe_setup = Arc::clone(&is_setup);
 
         let (views, dist) = process_samples_from_config(&config);
-        let files: Vec<String> = views.keys().map(|z| z.clone()).collect();
-        let complete_read_tx = start_write_out_thread(run_id, cli_opts, output_path.clone());
+        let files: Vec<String> = views.keys().cloned().collect();
+        let write_out_gracefully = Arc::clone(&graceful_shutdown);
+        let complete_read_tx =
+            start_write_out_thread(run_id, cli_opts, output_path, write_out_gracefully);
         let mut rng: StdRng = rand::SeedableRng::seed_from_u64(1234567);
 
         let starting_functional_pore_count =
@@ -1043,8 +1220,7 @@ impl DataServiceServicer {
                     } else {
                         occupied += 1;
                     }
-                    let read_estimated_finish_time =
-                        value.start_time_seconds as usize + value.duration;
+                    let read_estimated_finish_time = value.start_time_seconds + value.duration;
                     // experiment_time is the time the experimanet has started until now
                     let experiment_time = Utc::now().timestamp() as u64 - start_time;
                     // info!("exp time: {}, read_finish_time: {}, is exp greater {}", experiment_time, read_estimated_finish_time, experiment_time as usize > read_estimated_finish_time);
@@ -1052,7 +1228,6 @@ impl DataServiceServicer {
                     if experiment_time as usize > read_estimated_finish_time || value.was_unblocked
                     {
                         if value.write_out {
-
                             completed_reads += 1;
                             complete_read_tx.send(value.clone()).unwrap();
                             value.pause = r.sample(&mut rng);
@@ -1089,9 +1264,9 @@ impl DataServiceServicer {
                             continue;
                         }
                         // chance to aquire a read
-                        if rng.gen_bool(0.8){
+                        if rng.gen_bool(0.8) {
                             new_reads += 1;
-                            read_number += 1;   
+                            read_number += 1;
                             generate_read(
                                 &files,
                                 value,
@@ -1102,7 +1277,7 @@ impl DataServiceServicer {
                                 &start_time,
                                 &barcode_squig,
                             )
-                        }       
+                        }
                     }
                 }
                 let _end = now.elapsed().as_secs_f64();
@@ -1113,8 +1288,12 @@ impl DataServiceServicer {
                     );
                     time_logged_at = _end.ceil();
                 }
-
-                if dead_pores == 2950 {
+                {
+                    if *graceful_shutdown.lock().unwrap() {
+                        break;
+                    }
+                }
+                if dead_pores >= (0.97 * channel_size as f64) as usize {
                     break;
                 }
             }
@@ -1145,13 +1324,10 @@ impl DataService for DataServiceServicer {
         let data_lock = Arc::clone(&self.read_data);
         let data_lock_unblock = Arc::clone(&self.read_data);
         let setup = Arc::clone(&self.setup.clone());
-        let tx_unblocks = {
-            let tx_unblocks = start_unblock_thread(data_lock_unblock, setup);
-            tx_unblocks
-        };
+        let tx_unblocks = { start_unblock_thread(data_lock_unblock, setup) };
         let channel_size = self.channel_size;
         let mut stream_counter = 1;
-        let break_chunk_ms = self.break_chunks_ms.clone();
+        let break_chunk_ms = self.break_chunks_ms;
         let chunk_size = break_chunk_ms as f64 / 1000.0 * 4000.0;
 
         // Stream the responses back
@@ -1165,6 +1341,7 @@ impl DataService for DataServiceServicer {
                     let now2 = Instant::now();
                     let live_reads_request = live_reads_request.unwrap();
                     // send all the actions we wish to take to action thread
+                    // Unw
                     tx_unblocks.send(live_reads_request).unwrap();
                     stream_counter += 1
                 }
@@ -1220,7 +1397,7 @@ impl DataService for DataServiceServicer {
 
                                 // only send last chunks worth of data
                                 if  (stop - start) > (chunk_size as f64 * 1.1_f64) as usize {
-                                    // Work out where a break_reads size finishes 
+                                    // Work out where a break_reads size finishes
                                     // i.e if we have gotten 1.5 chunks worth since last time, that is not actually possible on a real sequencer.
                                     // So we need to calculate where the 1 chunk finishes and set that as the prev_chunk_stop and serve it
                                     let full_width = stop - start;
@@ -1242,7 +1419,7 @@ impl DataService for DataServiceServicer {
                                 read_info.time_accessed = now_time;
                                 read_info.prev_chunk_start = stop;
                                 let read_chunk = read_info.read[start..stop].to_vec();
-                                // Chunk is too short 
+                                // Chunk is too short
                                 if read_chunk.len() < 300 {
                                     continue
                                 }
@@ -1288,7 +1465,6 @@ impl DataService for DataServiceServicer {
             }
 
         };
-        info!("End of stream");
         Ok(Response::new(Box::pin(output) as Self::get_live_readsStream))
     }
 

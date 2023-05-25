@@ -1,7 +1,7 @@
 //! Implementation of the CLI for icarust. Simple - just lets a user provide verbosity and a path to a config toml.
 
+use crate::utils::set_up_logging;
 use clap::Parser;
-use std::io::Write;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(author, version, about, long_about = None)]
@@ -37,14 +37,7 @@ impl Cli {
             _ => Warn,
         };
 
-        pretty_env_logger::formatted_builder()
-            .format_module_path(true)
-            .format(|buf, record| {
-                let ts = buf.timestamp();
-                writeln!(buf, "{}: {}: {}", ts, record.level(), record.args())
-            })
-            .filter_level(log_level)
-            .init();
+        set_up_logging(log_level);
     }
     /// Check the config file is where specified
     pub fn check_config_exists(&self) {

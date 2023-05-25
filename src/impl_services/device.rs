@@ -15,14 +15,12 @@ use tonic::{Request, Response, Status};
 
 #[derive(Debug)]
 pub struct Device {
-    channel_size: usize
+    channel_size: usize,
 }
 
 impl Device {
-    pub fn new (channel_size: usize) -> Device {
-        Device {
-            channel_size
-        }
+    pub fn new(channel_size: usize) -> Device {
+        Device { channel_size }
     }
 }
 #[tonic::async_trait]
@@ -41,7 +39,7 @@ impl DeviceService for Device {
         offsets.resize(n_us, 0.0);
         let mut pa_ranges = vec![1.0];
         // resize in place
-        pa_ranges.resize(n_us, 0.0);
+        pa_ranges.resize(n_us, 1.0);
         return Ok(Response::new(device::GetCalibrationResponse {
             digitisation: 1,
             offsets,

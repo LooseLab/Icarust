@@ -14,21 +14,21 @@ use std::f64;
 
 //  Lifted from statrs https://docs.rs/statrs/latest/src/statrs/function/gamma.rs.html#1-808
 const GAMMA_R: f64 = 10.900511;
-const TWO_SQRT_E_OVER_PI: f64 = 1.8603827342052657173362492472666631120594218414085755;
+const TWO_SQRT_E_OVER_PI: f64 = 1.860_382_734_205_265_7;
 
 /// Polynomial coefficients for approximating the `gamma_ln` function
 const GAMMA_DK: &[f64] = &[
-    2.48574089138753565546e-5,
-    1.05142378581721974210,
-    -3.45687097222016235469,
-    4.51227709466894823700,
-    -2.98285225323576655721,
-    1.05639711577126713077,
-    -1.95428773191645869583e-1,
-    1.70970543404441224307e-2,
-    -5.71926117404305781283e-4,
-    4.63399473359905636708e-6,
-    -2.71994908488607703910e-9,
+    2.485_740_891_387_535_5e-5,
+    1.051_423_785_817_219_7,
+    -3.456_870_972_220_162_5,
+    4.512_277_094_668_948,
+    -2.982_852_253_235_766_4,
+    1.056_397_115_771_267,
+    -1.954_287_731_916_458_7e-1,
+    1.709_705_434_044_412e-2,
+    -5.719_261_174_043_057e-4,
+    4.633_994_733_599_057e-6,
+    -2.719_949_084_886_077_2e-9,
 ];
 
 /// calculate the gamme of a float, returning the gamma multiplied by the original float.
@@ -96,7 +96,7 @@ impl ReacquisitionPoisson {
 
 impl SampleDist for ReacquisitionPoisson {
     fn sample<R: rand::RngCore>(&self, rng: &mut R) -> f64 {
-        self.t.choose(rng).unwrap().clone()
+        *self.t.choose(rng).unwrap()
     }
 }
 
@@ -106,7 +106,7 @@ pub fn _calculate_death_chance(
     target_yield: f64,
     mean_read_length: f64,
 ) -> f64 {
-    1.0_f64 / (target_yield as f64 / mean_read_length / starting_channels)
+    1.0_f64 / (target_yield / mean_read_length / starting_channels)
 }
 
 #[derive(Debug)]

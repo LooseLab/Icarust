@@ -32,7 +32,7 @@ impl SampleDist for ReadLengthDist {
     where
         R: Rng,
     {
-        self.dist.choose(rng).unwrap().clone()
+        *self.dist.choose(rng).unwrap()
     }
 }
 
@@ -46,15 +46,15 @@ fn _create_skew_dist(mean: f64, sd: f64, skew: f64, size: f64) -> Vec<f64> {
     let scaling_slope: f64 = skew.abs() * K1_SLOPE + K1_INTERCEPT;
     let scaling_intercept: f64 = skew.abs() * K2_SLOPE + K2_INTERCEPT;
     let scale_factor: f64 = (sd - scaling_intercept) / scaling_slope;
-    let fsample_mean: f64 = fsample.iter().sum::<f64>() as f64 / fsample.len() as f64;
+    let fsample_mean: f64 = fsample.iter().sum::<f64>() / fsample.len() as f64;
     fsample
         .iter_mut()
         .for_each(|i| *i = ((*i - fsample_mean) * scale_factor) + *i);
     if skew < 0.0_f64 {
-        let fsample_mean: f64 = fsample.iter().sum::<f64>() as f64 / fsample.len() as f64;
+        let fsample_mean: f64 = fsample.iter().sum::<f64>() / fsample.len() as f64;
         fsample.iter_mut().for_each(|i| *i = fsample_mean - *i);
     }
-    let fsample_mean: f64 = fsample.iter().sum::<f64>() as f64 / fsample.len() as f64;
-    fsample.iter_mut().for_each(|i| *i += (mean + fsample_mean));
+    let fsample_mean: f64 = fsample.iter().sum::<f64>() / fsample.len() as f64;
+    fsample.iter_mut().for_each(|i| *i += mean + fsample_mean);
     fsample
 }

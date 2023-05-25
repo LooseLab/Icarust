@@ -20,7 +20,7 @@ serde_json = "1.0"
 rand = "0.8"
 rand_distr = "0.4"
 fnv = "1.0"
-log = "0.4.0"
+log = "0.4.17"
 pretty_env_logger = "0.4.0"
 uuid = { version = "0.8", features = ["v4"]}
 ndarray-npy = { version = "0.8.1", default-features = false }
@@ -31,6 +31,12 @@ chrono = "0.4"
 byteorder = "1"
 clap = { version = "3.2.5", features = ["derive"] }
 configparser = "3.0.2"
+nom = "7.1.3"
+needletail = "0.5.1"
+ctrlc = {version= "3.2.5", features = ["termination"] }
+fern = { version = "0.6.2", features = ["colored", "chrono"] }
+humantime = "2.1.0"
+lazy_static = "1.4.0"
 
 
 [build-dependencies]

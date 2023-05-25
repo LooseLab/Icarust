@@ -7,3 +7,6 @@
 basecall_test.py
 *LEFT*
 *.pyc
+*tls/*
+/docker/*/hg38_no_alts.fa
+/docker/output/*

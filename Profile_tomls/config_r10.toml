@@ -1,0 +1,24 @@
+output_path = "/tmp/"
+target_yield = 100000000000
+working_pore_percent = 85
+pore_type = "R10"
+
+[parameters]
+sample_name = "test"
+experiment_name = "test_2_bacteria"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "FenceSitter"
+
+[[sample]]
+name = "Bacteria 1"
+input_genome = "python/mixed_ref.fa"
+mean_read_length = 1000
+weight = 1
+
+[[sample]]
+name = "Bacteria 2"
+input_genome = "python/mixed_ref.fa"
+mean_read_length = 1500
+weight = 2
