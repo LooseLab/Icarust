@@ -8,11 +8,6 @@ Figure 1 - Accurate depiction of a man learning Rust ☠️
 | :zap: Icarust is a work in progress - as such some small bugs are to be expected. |
 |-----------------------------------------------------------------------------------|
 
-### Quick start docker
-Alternatively we offer a Docker container, which can be found at https://www.github.com/looselab/icarust_docker. 
-This negates the need for any manual building, dependency management and is simple and easy to use.
-
-
 ## Quick start docker ( Recommended)
 Alternatively we offer a Docker container, which can be found at https://www.github.com/looselab/icarust_docker. 
 This negates the need for any manual building, dependency management and is simple and easy to use.
