@@ -895,7 +895,7 @@ fn read_views_of_sequence_data(
         sample_info
     );
     // lazy but cba to pass through
-    let profile = r10_sim::get_sim_profile(r10_sim::SimType::PromR10Dna);
+    let profile = r10_sim::get_sim_profile(r10_sim::SimType::R10);
     let mut reader: Box<dyn FastxReader> =
         parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
     let mut num_seq: usize = 0;

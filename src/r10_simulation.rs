@@ -34,45 +34,28 @@ pub struct Kmer {
 }
 
 /// Profile for sequencing
-pub struct Profile {
+pub struct R10Settings {
     /// Digitisation to i16 I dunno
     digitisation: f64,
-    sample_rate: f64,
     /// range
     range: f64,
-    /// Offset between measured and expected voltage
-    offset_mean: f64,
-    /// std for all channels
-    offset_std: f64,
-    /// Median before the mean?
-    median_before_mean: f64,
-    /// Median bofore normalisation with stddev
-    median_before_std: f64,
-    /// Time spent in the pore
-    dwell_mean: f64,
 }
 
 /// Simulation type - Promethion or MInion. We always use Promethion
 pub enum SimType {
-    /// R10 promethion
-    PromR10Dna,
+    /// R10
+    R10,
 }
-const ADAPTOR_DNA: &str = "GGCGTCTGCTTGGGTGTTTAACCTTTTTTTTTTAATGTACTTCGTTCAGTTACGTATTGCT";
-const STALL: &str = "TTTTTTTTTTTTTTTTTTAATCAA";
+const PREFIX: &str =
+    "TTTTTTTTTTTTTTTTTTAATCAAGCAGCGGAGTTGAGGACGCGAGACGGGACTTTTTTAGCAGACTTTACGGACTACGACT";
 const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
 
 /// return the simulation profile for a given simulation type
-pub fn get_sim_profile(sim_type: SimType) -> Profile {
+pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
     match sim_type {
-        SimType::PromR10Dna => Profile {
+        SimType::R10 => R10Settings {
             digitisation: 2048.0,
-            sample_rate: 4000.0,
-            range: 281.345551,
-            offset_mean: -127.5655735,
-            offset_std: 19.377283387665,
-            median_before_mean: 189.87607393756,
-            median_before_std: 15.788097978713,
-            dwell_mean: 10.0,
+            range: 200.0,
         },
     }
 }
@@ -107,14 +90,13 @@ pub fn generate_prefix() -> Result<Vec<i16>, Box<dyn Error>> {
     let kmer_string =
         read_to_string("static/r10_squig_model.tsv").expect("Failed to read kmers to string");
     let (_, kmer_hashmap) = parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
-    let profile = get_sim_profile(SimType::PromR10Dna);
+    let profile = get_sim_profile(SimType::R10);
     let mut prefix_signal = Vec::with_capacity(2000);
     let mut prefix = String::new();
-    prefix.push_str(STALL);
-    prefix.push_str(ADAPTOR_DNA);
+    prefix.push_str(PREFIX);
     for i in 0..prefix.len() - 8 {
         let value = kmer_hashmap.get(&prefix[i..i + 9]).unwrap();
-        let x = (value * profile.digitisation) / profile.range - profile.offset_mean;
+        let x = (value * profile.digitisation) / profile.range;
         for _ in 0..10 {
             prefix_signal.push(x as i16);
         }
@@ -147,7 +129,7 @@ fn replace_char_with_base(string: &str, char_to_replace: Option<char>) -> String
 pub fn convert_to_signal(
     kmers: &FnvHashMap<String, f64>,
     record: &SequenceRecord,
-    profile: &Profile,
+    profile: &R10Settings,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * 10);
     let seq = record.seq();
@@ -164,7 +146,7 @@ pub fn convert_to_signal(
         });
         debug!("{value}");
 
-        let x = (value * profile.digitisation) / profile.range - profile.offset_mean;
+        let x = (value * profile.digitisation) / profile.range;
         // 10 sample for each base (sample_rate (4000) / base per second (400))
         // could also be worked out from profile.dwell_mean
         for _ in 0..10 {
@@ -173,3 +155,8 @@ pub fn convert_to_signal(
     }
     Ok(signal_vec)
 }
+
+// read_tag, u32
+// read_id
+// raw_data
+// daq_offset
