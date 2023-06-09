@@ -1,6 +1,7 @@
 //! Defines code used to create the R10 signal from pore models.
 
 use fnv::{FnvHashMap, FnvHashSet};
+use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 use needletail::parser::SequenceRecord;
 use needletail::Sequence;
@@ -88,7 +89,7 @@ pub fn parse_kmers(input: &str) -> IResult<&str, FnvHashMap<String, f64>> {
 /// Generate signal for a stall sequence and adpator DNA
 pub fn generate_prefix() -> Result<Vec<i16>, Box<dyn Error>> {
     let kmer_string =
-        read_to_string("static/r10_squig_model.tsv").expect("Failed to read kmers to string");
+        read_to_string("static/R10_model.tsv").expect("Failed to read kmers to string");
     let (_, kmer_hashmap) = parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
     let profile = get_sim_profile(SimType::R10);
     let mut prefix_signal = Vec::with_capacity(2000);
@@ -134,6 +135,13 @@ pub fn convert_to_signal(
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * 10);
     let seq = record.seq();
     let num_kmers = seq.len() - 8;
+    let sty = ProgressStyle::with_template(
+        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
+    )
+    .unwrap()
+    .progress_chars("##-");
+    let pb = ProgressBar::new(num_kmers.try_into().unwrap());
+    pb.set_style(sty);
     for kmer in record.kmers(9) {
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
         kmer = replace_char_with_base(&kmer, None);
@@ -152,7 +160,10 @@ pub fn convert_to_signal(
         for _ in 0..10 {
             signal_vec.push(x as i16);
         }
+        pb.inc(1);
     }
+    pb.finish_with_message("done");
+
     Ok(signal_vec)
 }
 

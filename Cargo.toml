@@ -37,6 +37,7 @@ ctrlc = {version= "3.2.5", features = ["termination"] }
 fern = { version = "0.6.2", features = ["colored", "chrono"] }
 humantime = "2.1.0"
 lazy_static = "1.4.0"
+indicatif = "0.17.5"
 
 
 [build-dependencies]
