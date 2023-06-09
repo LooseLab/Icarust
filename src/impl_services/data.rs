@@ -430,6 +430,7 @@ fn start_write_out_thread(
                     let signal = to_write_info.read[0..new_end].to_vec();
                     debug!("{to_write_info:#?}");
                     if signal.is_empty() {
+                        error!("Attempt to write empty signal");
                         continue;
                     };
                     let raw_attrs: HashMap<&str, RawAttrsOpts> = HashMap::from([
@@ -1121,7 +1122,7 @@ fn generate_read(
             // generate a prefix
             let mut prefix = r10_sim::generate_prefix().expect("NO PREFIX BAD");
             //  read the signal here
-            return prefix.extend(
+            prefix.extend(
                 file_info
                     .sequence
                     .as_ref()
@@ -1129,9 +1130,9 @@ fn generate_read(
                     [start..end]
                     .to_vec(),
             );
+            prefix
         }
     };
-
     // Barcode name has been provided for this sample
     if sample_info.is_barcoded {
         let (mut barcode_1_squig, mut barcode_2_squig) =
