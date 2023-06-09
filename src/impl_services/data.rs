@@ -276,7 +276,8 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
     for sample in config.sample.iter() {
         if let Some(barcode_vec) = &sample.barcodes {
             for barcode in barcode_vec.iter() {
-                let (barcode_squig_1, barcode_squig_2) = get_barcode_squiggle(barcode).unwrap();
+                let (barcode_squig_1, barcode_squig_2) =
+                    get_barcode_squiggle(barcode, config.check_pore_type()).unwrap();
                 barcodes.insert(barcode.clone(), (barcode_squig_1, barcode_squig_2));
             }
         }
@@ -285,16 +286,24 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
 }
 
 /// Read in the 1st and second squiggle for a given barcode.
-fn get_barcode_squiggle(barcode: &String) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError> {
+/// setting R10 as the poretype appends_R10 and fetches R10 data
+fn get_barcode_squiggle(
+    barcode: &String,
+    pore_type: PoreType,
+) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError> {
     info!("Fetching barcode squiggle for barcode {}", barcode);
+    let r10_suffix = match pore_type {
+        PoreType::R10 => "_R10",
+        PoreType::R9 => "",
+    };
     let barcode_arr_1: Array1<i16> = read_npy(format!(
-        "static/barcode_squiggle/{}_1.squiggle.npy",
-        barcode
+        "static/barcode_squiggle/{}_{}{}",
+        barcode, "1", r10_suffix
     ))?;
     let barcode_arr_1: Vec<i16> = barcode_arr_1.to_vec();
     let barcode_arr_2: Array1<i16> = read_npy(format!(
-        "static/barcode_squiggle/{}_2.squiggle.npy",
-        barcode
+        "static/barcode_squiggle/{}_{}{}",
+        barcode, "2", r10_suffix
     ))?;
     let barcode_arr_2: Vec<i16> = barcode_arr_2.to_vec();
     Ok((barcode_arr_1, barcode_arr_2))
