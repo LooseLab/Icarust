@@ -3,6 +3,9 @@
 use fnv::{FnvHashMap, FnvHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
+use memmap2::Mmap;
+use ndarray::{ArrayBase, ArrayView1, Dim, ViewRepr};
+use ndarray_npy::ViewNpyExt;
 use needletail::parser::SequenceRecord;
 use needletail::Sequence;
 use nom::character::complete::{alpha1, multispace0, tab};
@@ -13,7 +16,7 @@ use nom::IResult;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::read_to_string;
+use std::fs::File;
 
 lazy_static! {
     static ref HASHSET: FnvHashSet<char> = {
@@ -88,22 +91,10 @@ pub fn parse_kmers(input: &str) -> IResult<&str, FnvHashMap<String, f64>> {
 
 /// Generate signal for a stall sequence and adpator DNA
 pub fn generate_prefix() -> Result<Vec<i16>, Box<dyn Error>> {
-    let kmer_string =
-        read_to_string("static/R10_model.tsv").expect("Failed to read kmers to string");
-    let (_, kmer_hashmap) = parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
-    let profile = get_sim_profile(SimType::R10);
-    let mut prefix_signal = Vec::with_capacity(2000);
-    let mut prefix = String::new();
-    prefix.push_str(PREFIX);
-    for i in 0..prefix.len() - 8 {
-        let value = kmer_hashmap.get(&prefix[i..i + 9]).unwrap();
-        let x = (value * profile.digitisation) / profile.range;
-        for _ in 0..10 {
-            prefix_signal.push(x as i16);
-        }
-    }
-    prefix_signal.shrink_to_fit();
-    Ok(prefix_signal)
+    let file = File::open("static/prefix.squiggle.npy").unwrap();
+    let mmap = unsafe { Mmap::map(&file).unwrap() };
+    let view: Vec<i16> = ArrayView1::<i16>::view_npy(&mmap).unwrap().to_vec();
+    Ok(view)
 }
 
 /// Replace all occurences of a character in a string with a randomly chosen A,C,G, or T.
