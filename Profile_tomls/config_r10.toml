@@ -13,12 +13,12 @@ position = "FenceSitter"
 
 [[sample]]
 name = "Bacteria 1"
-input_genome = "python/mixed_ref.fa"
+input_genome = "docker/squiggle_arrs/mixed_ref.fa"
 mean_read_length = 1000
 weight = 1
 
 [[sample]]
 name = "Bacteria 2"
-input_genome = "python/mixed_ref.fa"
+input_genome = "docker/squiggle_arrs/mixed_ref.fa"
 mean_read_length = 1500
 weight = 2
