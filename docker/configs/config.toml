@@ -1,6 +1,7 @@
 output_path = "/tmp/"
 target_yield = 100000000000
 working_pore_percent = 85
+pore_type = "R9"
 
 [parameters]
 sample_name = "test"
