@@ -1467,11 +1467,11 @@ impl DataService for DataServiceServicer {
                             seconds_since_start: 0.0,
                             channels: channel_data.clone(),
                             action_responses: vec![]
-                        }).await.unwrap_or_else(|| {
+                        }).await.unwrap_or_else(|_| {
                             panic!(
                                 "Failed to send read chunks - has readfish disconnected?"
                             )
-                        });;
+                        });
                         channel_data.clear();
                     }
                     container.clear();
