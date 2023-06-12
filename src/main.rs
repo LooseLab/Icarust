@@ -343,11 +343,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         graceful_shutdown_clone,
     ));
     ctrlc::set_handler(move || {
+        warn!("Caught keyboard interrupt, exiting in 10 seconds!");
         {
             let mut x = graceful_shutdown.lock().unwrap();
             *x = true;
         }
-        std::thread::sleep(Duration::from_millis(2000));
+        std::thread::sleep(Duration::from_secs(10));
         std::process::exit(0);
     })
     .expect("FAILED TO CATCH SIGNAL SOMWHOW");
