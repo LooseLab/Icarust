@@ -1341,7 +1341,8 @@ impl DataServiceServicer {
                         break;
                     }
                 }
-                if dead_pores >= (0.97 * channel_size as f64) as usize {
+                if dead_pores >= (0.99 * channel_size as f64) as usize {
+                    *graceful_shutdown.lock().unwrap() = true;
                     break;
                 }
             }
