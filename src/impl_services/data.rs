@@ -1467,7 +1467,7 @@ impl DataService for DataServiceServicer {
                             seconds_since_start: 0.0,
                             channels: channel_data.clone(),
                             action_responses: vec![]
-                        }).await.unwrap();
+                        }).await.expect("Error unwrapping sent read chunk - has readfish disconnected?");
                         channel_data.clear();
                     }
                     container.clear();
