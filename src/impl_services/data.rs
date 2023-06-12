@@ -823,10 +823,38 @@ fn process_samples_from_config(
                     sample,
                 );
             }
-            // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
-            // so we only ever see this file when we generate a read
             let sample_info = views.get_mut(&sample.name).unwrap();
-            sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
+            match config.check_pore_type() {
+                PoreType::R9 => {
+                    // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
+                    // so we only ever see this file when we generate a read
+                    sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
+                }
+                PoreType::R10 => {
+                    let distributions: Vec<WeightedIndex<usize>> = match &sample.weights_files {
+                        Some(_) => read_sample_distribution_files(sample),
+                        // generate amplicon distributions for each barcode
+                        None => {
+                            let num_contigs = r10_sim::num_sequences(sample.input_genome.clone());
+                            let mut file_distributions = vec![];
+                            // If we have barcodes
+                            if let Some(barcodes) = &sample.barcodes {
+                                for _barcode in barcodes.iter() {
+                                    let disty =
+                                        generate_file_sampling_distribution(num_contigs, &mut rng);
+                                    file_distributions.push(disty);
+                                }
+                            } else {
+                                let disty =
+                                    generate_file_sampling_distribution(num_contigs, &mut rng);
+                                file_distributions.push(disty)
+                            }
+                            file_distributions
+                        }
+                    };
+                    sample_info.file_weights = distributions;
+                }
+            }
             // Time for barcoding shenanigans
             let mut barcode_dists = None;
             if sample.is_barcoded() {

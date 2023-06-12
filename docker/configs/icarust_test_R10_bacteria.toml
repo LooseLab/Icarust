@@ -18,5 +18,3 @@ name = "r10_bac"
 weight = 1
 input_genome = "/squiggle_arrs/mixed_ref.fa"
 mean_read_length = 2800
-barcodes = ["Barcode01", "Barcode02", "Barcode03"]
-barcode_weights = [1, 2, 3]
