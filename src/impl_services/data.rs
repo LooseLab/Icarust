@@ -775,16 +775,19 @@ fn process_samples_from_config(
                 Some(_) => read_sample_distribution_files(sample),
                 // generate amplicon distributions for each barcode
                 None => {
-                    let num_files = sample_info.files.len();
+                    let num_contigs = match config.check_pore_type() {
+                        PoreType::R10 => r10_sim::num_sequences(sample.input_genome.clone()),
+                        PoreType::R9 => sample_info.files.len(),
+                    };
                     let mut file_distributions = vec![];
                     // If we have barcodes
                     if let Some(barcodes) = &sample.barcodes {
                         for _barcode in barcodes.iter() {
-                            let disty = generate_file_sampling_distribution(num_files, &mut rng);
+                            let disty = generate_file_sampling_distribution(num_contigs, &mut rng);
                             file_distributions.push(disty);
                         }
                     } else {
-                        let disty = generate_file_sampling_distribution(num_files, &mut rng);
+                        let disty = generate_file_sampling_distribution(num_contigs, &mut rng);
                         file_distributions.push(disty)
                     }
                     file_distributions
@@ -913,12 +916,7 @@ fn read_views_of_sequence_data(
     );
     // lazy but cba to pass through
     let profile = r10_sim::get_sim_profile(r10_sim::SimType::R10);
-    let mut reader: Box<dyn FastxReader> = parse_fastx_file(file_path)
-        .unwrap_or_else(|_| panic!("Can't find FASTA file at {}", file_path.display()));
-    let mut num_seq: usize = 0;
-    while reader.next().is_some() {
-        num_seq += 1;
-    }
+    let num_seq = r10_sim::num_sequences(file_path);
     info!("Simulating for {num_seq} sequences");
     let mut reader: Box<dyn FastxReader> =
         parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
@@ -1086,6 +1084,7 @@ fn generate_read(
     // choose barcode
     if sample_info.is_barcoded {
         // this is analagous to the choice of the barcode as well - the file weights are in vec with one weight per barcode
+        // This is so we can have uneven amplicon coverage, with a different uneveness per barcode
         file_weight_choice = sample_info.barcode_weights.as_ref().unwrap().sample(rng);
         barcode = Some(
             sample_info
@@ -1099,7 +1098,13 @@ fn generate_read(
     // need to choose a squiggle file at this point
     let file_info = sample_info
         .files
-        .get(sample_info.file_weights.get(0).unwrap().sample(rng))
+        .get(
+            sample_info
+                .file_weights
+                .get(file_weight_choice)
+                .unwrap()
+                .sample(rng),
+        )
         .unwrap();
     // earliest possible start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {

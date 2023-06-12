@@ -1,13 +1,15 @@
 //! Defines code used to create the R10 signal from pore models.
 
+use core::num;
 use fnv::{FnvHashMap, FnvHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 use memmap2::Mmap;
 use ndarray::{ArrayBase, ArrayView1, Dim, ViewRepr};
 use ndarray_npy::ViewNpyExt;
+use needletail::parse_fastx_file;
 use needletail::parser::SequenceRecord;
-use needletail::Sequence;
+use needletail::{FastxReader, Sequence};
 use nom::character::complete::{alpha1, multispace0, tab};
 use nom::multi::many1;
 use nom::number::complete::double;
@@ -17,6 +19,7 @@ use rand::seq::SliceRandom;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
+use std::path::Path;
 
 lazy_static! {
     static ref HASHSET: FnvHashSet<char> = {
@@ -115,6 +118,18 @@ fn replace_char_with_base(string: &str, char_to_replace: Option<char>) -> String
         .collect();
 
     replaced_string
+}
+
+/// Return the given number of sequences contained in a provided Fasta/Fastq file. File can be gzipped,
+/// will error if not a FASTQ/FASTA file.
+pub fn num_sequences<P: AsRef<Path> + std::fmt::Debug>(path: P) -> usize {
+    let mut reader: Box<dyn FastxReader> =
+        parse_fastx_file(&path).unwrap_or_else(|_| panic!("Can't find FASTA file at {path:#?}"));
+    let mut num_seq: usize = 0;
+    while reader.next().is_some() {
+        num_seq += 1;
+    }
+    num_seq
 }
 
 /// Convert a given FASTA sequence to signal, digitising it and return a Vector of I16
