@@ -273,6 +273,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let output_dir = config.output_path.clone();
     let start_time_string: String = format!("{}", Utc::now().format("%Y%m%d_%H%M"));
     let flowcell_id = config.parameters.flowcell_name.clone();
+    let experiment_duration = config.parameters.experiment_duration_set;
+    let start_time = Utc::now();
     let mut output_path = output_dir.clone();
     output_path.push(experiment_id);
     output_path.push(sample_id);
@@ -362,6 +364,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .add_service(data_svc)
         .serve(addr_position)
         .await?;
-
     Ok(())
 }
