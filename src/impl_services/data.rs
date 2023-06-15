@@ -17,7 +17,7 @@ use needletail::{parse_fastx_file, FastxReader};
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{create_dir_all, read_to_string, DirEntry, File};
+use std::fs::{create_dir_all, read, read_to_string, DirEntry, File};
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -1190,6 +1190,8 @@ fn generate_read(
                 .to_vec();
             if sample_info.is_barcoded {
                 read_squig.extend(barcode_2_squig);
+                // add on some end padding to see if it improves basecalling
+                read_squig.extend(&prefix);
                 barcode_1_squig.extend(read_squig);
                 read_squig = barcode_1_squig;
             }
