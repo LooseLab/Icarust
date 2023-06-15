@@ -783,11 +783,13 @@ fn process_samples_from_config(
                     // If we have barcodes
                     if let Some(barcodes) = &sample.barcodes {
                         for _barcode in barcodes.iter() {
-                            let disty = generate_file_sampling_distribution(num_contigs, &mut rng);
+                            let disty =
+                                generate_file_sampling_distribution(num_contigs, &mut rng, None);
                             file_distributions.push(disty);
                         }
                     } else {
-                        let disty = generate_file_sampling_distribution(num_contigs, &mut rng);
+                        let disty =
+                            generate_file_sampling_distribution(num_contigs, &mut rng, None);
                         file_distributions.push(disty)
                     }
                     file_distributions
@@ -836,17 +838,25 @@ fn process_samples_from_config(
                         // generate amplicon distributions for each barcode
                         None => {
                             let num_contigs = r10_sim::num_sequences(sample.input_genome.clone());
+                            let read_lengths =
+                                r10_sim::sequence_lengths(sample.input_genome.clone());
                             let mut file_distributions = vec![];
                             // If we have barcodes
                             if let Some(barcodes) = &sample.barcodes {
                                 for _barcode in barcodes.iter() {
-                                    let disty =
-                                        generate_file_sampling_distribution(num_contigs, &mut rng);
+                                    let disty = generate_file_sampling_distribution(
+                                        num_contigs,
+                                        &mut rng,
+                                        Some(&read_lengths),
+                                    );
                                     file_distributions.push(disty);
                                 }
                             } else {
-                                let disty =
-                                    generate_file_sampling_distribution(num_contigs, &mut rng);
+                                let disty = generate_file_sampling_distribution(
+                                    num_contigs,
+                                    &mut rng,
+                                    Some(&read_lengths),
+                                );
                                 file_distributions.push(disty)
                             }
                             file_distributions
@@ -890,11 +900,16 @@ fn read_sample_distribution_files(sample: &Sample) -> Vec<WeightedIndex<usize>> 
 fn generate_file_sampling_distribution(
     num_amplicons: usize,
     randay: &mut rand::rngs::StdRng,
+    read_lengths: Option<&Vec<usize>>,
 ) -> WeightedIndex<usize> {
     let mut distribution: Vec<usize> = vec![];
     let skew_normal: SkewNormal<f64> = SkewNormal::new(7.0, 2.0, 1.0).unwrap();
-    for _ in 0..num_amplicons {
-        distribution.push(skew_normal.sample(randay).ceil() as usize);
+    if let Some(hello) = read_lengths {
+        distribution.extend(hello);
+    } else {
+        for _ in 0..num_amplicons {
+            distribution.push(skew_normal.sample(randay).ceil() as usize);
+        }
     }
     WeightedIndex::new(&distribution).unwrap()
 }
@@ -1144,38 +1159,47 @@ fn generate_read(
     let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
     let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
-    let mut base_squiggle = match sample_info.pore_type {
-        PoreType::R9 => file_info
-            .view
-            .as_ref()
-            .expect("Error unwraping signal view")
-            .slice(s![start..end])
-            .to_vec(),
+    let (mut barcode_1_squig, mut barcode_2_squig) = (vec![], vec![]);
+    // Barcode name has been provided for this sample
+    if sample_info.is_barcoded {
+        (barcode_1_squig, barcode_2_squig) = barcode_squig.get(barcode.unwrap()).unwrap().clone();
+    }
+    let mut squiggle = match sample_info.pore_type {
+        PoreType::R9 => {
+            let mut read_squig = file_info
+                .view
+                .as_ref()
+                .expect("Error unwraping signal view")
+                .slice(s![start..end])
+                .to_vec();
+            if sample_info.is_barcoded {
+                read_squig.extend(barcode_2_squig);
+                barcode_1_squig.extend(read_squig);
+                read_squig = barcode_1_squig;
+            }
+            read_squig
+        }
         PoreType::R10 => {
             // generate a prefix
             let mut prefix = r10_sim::generate_prefix().expect("NO PREFIX BAD");
             //  read the signal here
-            prefix.extend(
-                file_info
-                    .sequence
-                    .as_ref()
-                    .expect("Couldn't get my hands on that tasty tasty signal")
-                    [start..end]
-                    .to_vec(),
-            );
+            let mut read_squig = file_info
+                .sequence
+                .as_ref()
+                .expect("Couldn't get my hands on that tasty tasty signal")[start..end]
+                .to_vec();
+            if sample_info.is_barcoded {
+                read_squig.extend(barcode_2_squig);
+                barcode_1_squig.extend(read_squig);
+                read_squig = barcode_1_squig;
+            }
+            prefix.extend(read_squig);
             prefix
         }
     };
-    // Barcode name has been provided for this sample
-    if sample_info.is_barcoded {
-        let (mut barcode_1_squig, mut barcode_2_squig) =
-            barcode_squig.get(barcode.unwrap()).unwrap().clone();
-        base_squiggle.append(&mut barcode_2_squig);
-        barcode_1_squig.append(&mut base_squiggle);
-        base_squiggle = barcode_1_squig;
-    }
+
     // slice the view to get our full read
-    value.read.append(&mut base_squiggle);
+    value.read.append(&mut squiggle);
     // set estimated duration in seconds
     value.duration = value.read.len() / 4000;
     // set the read len for channel death chance
