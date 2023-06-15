@@ -1,10 +1,9 @@
 //! Defines code used to create the R10 signal from pore models.
-use core::num;
 use fnv::{FnvHashMap, FnvHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
 use lazy_static::lazy_static;
 use memmap2::Mmap;
-use ndarray::{ArrayBase, ArrayView1, Dim, ViewRepr};
+use ndarray::ArrayView1;
 use ndarray_npy::ViewNpyExt;
 use needletail::parse_fastx_file;
 use needletail::parser::SequenceRecord;
@@ -18,7 +17,7 @@ use rand::seq::SliceRandom;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::{read, File};
+use std::fs::File;
 use std::path::Path;
 
 lazy_static! {
@@ -94,8 +93,8 @@ pub enum SimType {
     /// R10
     R10,
 }
-const PREFIX: &str =
-    "TTTTTTTTTTTTTTTTTTAATCAAGCAGCGGAGTTGAGGACGCGAGACGGGACTTTTTTAGCAGACTTTACGGACTACGACT";
+// const PREFIX: &str =
+//     "TTTTTTTTTTTTTTTTTTAATCAAGCAGCGGAGTTGAGGACGCGAGACGGGACTTTTTTAGCAGACTTTACGGACTACGACT";
 const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
 
 /// return the simulation profile for a given simulation type
