@@ -1,5 +1,4 @@
 //! Defines code used to create the R10 signal from pore models.
-
 use core::num;
 use fnv::{FnvHashMap, FnvHashSet};
 use indicatif::{ProgressBar, ProgressStyle};
@@ -16,9 +15,10 @@ use nom::number::complete::double;
 use nom::sequence::{separated_pair, terminated};
 use nom::IResult;
 use rand::seq::SliceRandom;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{read, File};
 use std::path::Path;
 
 lazy_static! {
@@ -30,6 +30,47 @@ lazy_static! {
         set.insert('T');
         set
     };
+}
+
+/// Transform a nucleic acid sequence into its "normalized" form.
+///
+/// The normalized form is:
+///  - only AGCTN and possibly - (for gaps)
+///  - strip out any whitespace or line endings
+///  - lowercase versions of these are uppercased
+///  - U is converted to T (make everything a DNA sequence)
+///  - some other punctuation is converted to gaps
+///  - IUPAC bases may be converted to N's depending on the parameter passed in
+///  - everything else is considered a N
+pub fn normalize(seq: &[u8]) -> Option<Vec<u8>> {
+    let mut buf: Vec<u8> = Vec::with_capacity(seq.len());
+    let mut changed: bool = false;
+
+    for n in seq.iter() {
+        let (new_char, char_changed) = match (*n, false) {
+            c @ (b'A', _) | c @ (b'C', _) | c @ (b'G', _) | c @ (b'T', _) => (c.0, false),
+            (b'a', _) => (b'A', true),
+            (b'c', _) => (b'C', true),
+            (b'g', _) => (b'G', true),
+            // normalize uridine to thymine
+            (b't', _) | (b'u', _) | (b'U', _) => (b'T', true),
+            // normalize gaps
+            (b'.', _) | (b'~', _) => (b'-', true),
+            // remove all whitespace and line endings
+            (b' ', _) | (b'\t', _) | (b'\r', _) | (b'\n', _) => (b' ', true),
+            // everything else is an N
+            _ => (b' ', true),
+        };
+        changed = changed || char_changed;
+        if new_char != b' ' {
+            buf.push(new_char);
+        }
+    }
+    if changed {
+        Some(buf)
+    } else {
+        None
+    }
 }
 
 /// hold a kmer
@@ -132,15 +173,26 @@ pub fn num_sequences<P: AsRef<Path> + std::fmt::Debug>(path: P) -> usize {
     num_seq
 }
 
+/// Get the lengths of all contigs in a given FASTA/FASTQ file
+pub fn sequence_lengths<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Vec<usize> {
+    let mut read_lengths = vec![];
+    let mut reader: Box<dyn FastxReader> =
+        parse_fastx_file(&path).unwrap_or_else(|_| panic!("Can't find FASTA file at {path:#?}"));
+    while let Some(record) = reader.next() {
+        read_lengths.push(record.unwrap().num_bases())
+    }
+    read_lengths
+}
+
 /// Convert a given FASTA sequence to signal, digitising it and return a Vector of I16
-pub fn convert_to_signal(
+pub fn convert_to_signal<'a>(
     kmers: &FnvHashMap<String, f64>,
     record: &SequenceRecord,
     profile: &R10Settings,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * 10);
-    let seq = record.seq();
-    let num_kmers = seq.len() - 8;
+    let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
+    let num_kmers = r.len() - 8;
     let sty = ProgressStyle::with_template(
         "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
     )
@@ -148,7 +200,7 @@ pub fn convert_to_signal(
     .progress_chars("##-");
     let pb = ProgressBar::new(num_kmers.try_into().unwrap());
     pb.set_style(sty);
-    for kmer in record.kmers(9) {
+    for kmer in r.kmers(9) {
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
         kmer = replace_char_with_base(&kmer, None);
         debug!("{kmer}");
