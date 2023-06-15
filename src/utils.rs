@@ -18,13 +18,14 @@ pub fn set_up_logging(level: log::LevelFilter) {
     fern::Dispatch::new()
         .format(move |out, message, record| {
             out.finish(format_args!(
-                "{color_line}[{date} {level} {target} {color_line}] {message}\x1B[0m",
+                "{color_line}[{date} {level} {target}: {line} {color_line}] {message}\x1B[0m",
                 color_line = format_args!(
                     "\x1B[{}m",
                     colors_line.get_color(&record.level()).to_fg_str()
                 ),
                 date = humantime::format_rfc3339_seconds(SystemTime::now()),
                 target = record.target(),
+                line = record.line().unwrap_or(0),
                 level = colors_level.color(record.level()),
                 message = message,
             ));
