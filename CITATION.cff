@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+authors:
+- family-names: "Munro"
+  given-names: "Rory"
+  orcid: "https://orcid.org/0000-0003-3158-0303"
+- family-names: "Alex"
+  given-names: "Payne"
+  orcid: "https://orcid.org/0000-0002-1962-3019"
+- family-names: "Matthew"
+  given-names: "Loose"
+  orcid: "https://orcid.org/0000-0002-5264-0929"
+title: "Icarust, a real-time simulator for Oxford Nanopore adaptive sampling."
+version: 0.2
+doi: 10.1101/2023.05.16.540986 
+date-released: 2023-05-23
+url: "https://github.com/Looselab/Icarust"
