@@ -7,7 +7,15 @@ use std::collections::HashMap;
 use tonic::{Request, Response, Status};
 
 use crate::services::minknow_api::analysis_configuration;
-use crate::services::minknow_api::analysis_configuration::analysis_configuration_service_server::AnalysisConfigurationService;
+use crate::services::minknow_api::analysis_configuration::{
+    analysis_configuration_service_server::AnalysisConfigurationService,
+    GetAnalysisConfigurationRequest,
+    GetReadClassificationsRequest,
+    GetReadClassificationsResponse,
+    AnalysisConfiguration,
+    EventDetection,
+    ReadDetectionParams
+};
 #[derive(Debug)]
 pub struct Analysis();
 
@@ -16,8 +24,8 @@ impl AnalysisConfigurationService for Analysis {
     /// Get read classifications, as an int to string map.
     async fn get_read_classifications(
         &self,
-        _request: Request<analysis_configuration::GetReadClassificationsRequest>,
-    ) -> Result<Response<analysis_configuration::GetReadClassificationsResponse>, Status> {
+        _request: Request<GetReadClassificationsRequest>,
+    ) -> Result<Response<GetReadClassificationsResponse>, Status> {
         // Hard coded to minknows current values
         let class_map = HashMap::from([
             (83, "strand".to_string()),
@@ -40,4 +48,20 @@ impl AnalysisConfigurationService for Analysis {
             },
         ))
     }
+
+    async fn get_analysis_configuration(
+        &self,
+        _request: Request<GetAnalysisConfigurationRequest>,
+    ) -> Result<Response<AnalysisConfiguration>, Status> {
+        Ok(Response::new(AnalysisConfiguration {
+                event_detection: Some(EventDetection{
+                    window_size: 0,
+                }),
+                read_detection: Some(ReadDetectionParams{
+                    break_reads_after_seconds: Some(1.0),
+                })
+            }
+        ))
+    }
+
 }

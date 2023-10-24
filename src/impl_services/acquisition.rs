@@ -16,6 +16,7 @@ use crate::services::minknow_api::acquisition::{
     AcquisitionRunInfo, CurrentStatusRequest, CurrentStatusResponse,
     GetCurrentAcquisitionRunRequest, GetProgressRequest, GetProgressResponse,
     WatchCurrentAcquisitionRunRequest,
+    GetAcquisitionRunInfoRequest,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -50,6 +51,7 @@ impl AcquisitionService for Acquisition {
             config_summary: None,
             writer_summary: None,
             bream_info: None,
+            target_run_until_criteria: None,
         };
         tokio::spawn(async move {
             tx.send(Ok(acquisition_run_info.clone())).await.unwrap();
@@ -77,6 +79,7 @@ impl AcquisitionService for Acquisition {
             config_summary: None,
             writer_summary: None,
             bream_info: None,
+            target_run_until_criteria: None,
         }))
     }
 
@@ -96,6 +99,30 @@ impl AcquisitionService for Acquisition {
                 acquired: 100,
                 processed: 900,
             }),
+        }))
+    }
+
+    async fn get_acquisition_info(
+        &self,
+        _request: Request<GetAcquisitionRunInfoRequest>,
+    ) -> Result<Response<AcquisitionRunInfo>, Status> {
+        Ok(Response::new(AcquisitionRunInfo {
+            run_id: self.run_id.clone(),
+            startup_state: 0,
+            startup_state_estimated_end: None,
+            startup_state_estimated_percent_complete: 0.0,
+            state: 0,
+            finishing_state: 0,
+            stop_reason: 0,
+            start_time: None,
+            data_read_start_time: None,
+            data_read_end_time: None,
+            end_time: None,
+            yield_summary: None,
+            config_summary: None,
+            writer_summary: None,
+            bream_info: None,
+            target_run_until_criteria: None,
         }))
     }
 }

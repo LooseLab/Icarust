@@ -14,6 +14,79 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 
 service ProtocolService {
+    // Initiates a python instance that runs the script specified by the `path` argument.
+    // `list_protocols` will give back a list of protocol scripts that can be started by this call
+    // rpc start_protocol (StartProtocolRequest) returns (StartProtocolResponse) {}
+
+    // Stops the currently running protocol script instance.
+    // rpc stop_protocol (StopProtocolRequest) returns (StopProtocolResponse) {}
+
+    // Request the protocol to pause.
+    //
+    // This will return an error unless the ProtocolRunInfo has the `can_pause` field set to true.
+    // It will have no effect if the protocol is already paused or pausing.
+    //
+    // Since 4.4.
+    // rpc pause_protocol (PauseProtocolRequest) returns (PauseProtocolResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Request the protocol to resume.
+    //
+    // This will return an error unless the ProtocolRunInfo has the `can_pause` field set to true.
+    // It will have no effect if the protocol is not paused or pausing.
+    //
+    // Since 4.4.
+    // rpc resume_protocol (ResumeProtocolRequest) returns (ResumeProtocolResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Request the protocol to perform a mux scan.
+    //
+    // This will return an error unless the ProtocolRunInfo has the `can_trigger_mux_scan` field set
+    // to true. It will have no effect if the protocol is already running or preparing for a mux
+    // scan.
+    //
+    // Since 4.4.
+    // rpc trigger_mux_scan (TriggerMuxScanRequest) returns (TriggerMuxScanResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Wait for a protocol run to finish.
+    //
+    // The call blocks until the run with the given run ID has finished (or returns immediately if
+    // it had already finished) and returns information about the protocol run.
+    //
+    // If no run has been started with the provided run ID (or no run ID is given), an error is
+    // returned.
+    //
+    // If NOTIFY_BEFORE_TERMINATION is specified for state, the protocol end time is an estimate, including
+    // the allowed timeout.
+    //
+    // Since 1.10
+    // rpc wait_for_finished (WaitForFinishedRequest) returns (ProtocolRunInfo) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Gets information about a protocol run.
+    //
+    // If no run ID is provided, information about the most recently started protocol run is
+    // provided.
+    //
+    // Since 1.10
+    rpc get_run_info (GetRunInfoRequest) returns (ProtocolRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // List previously started protocol run ids (including any current protocol), in order of starting.
+    //
+    // The returned object can be used to find protocol information with get_run_info.
+    //
+    // Since 1.11
+    // rpc list_protocol_runs (ListProtocolRunsRequest) returns (ListProtocolRunsResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
     // Returns the name and run id of the currently running protocol.
     //
     // Will fail with FAILED_PRECONDITION if there is no protocol running
@@ -23,6 +96,144 @@ service ProtocolService {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
 
+    // Returns current protocol run info and streams any changes to the current protocol
+    //
+    // This call can be made even if there is no current protocol running. In this case, the next streamed
+    // response will be the start of a new protocol instance and you will receive updates for that protocol
+    // until it finishes
+    //
+    // If a protocol finishes this stream will still continue to run and you will be notified when a new protocol starts
+    //
+    // Since 1.12
+    // rpc watch_current_protocol_run (WatchCurrentProtocolRunRequest) returns (stream ProtocolRunInfo) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Gives back a list that contains info about each possible protocol script minknow is aware of.
+    // This will most likely be used to retrieve a suitable protocol script that can be passed on to `start_protocol`
+    //
+    // Since 1.10
+    // rpc list_protocols (ListProtocolsRequest) returns (ListProtocolsResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Returns string-to-string map of the context tags
+    //
+    // Since 1.11
+    // rpc get_context_info (GetContextInfoRequest) returns (GetContextInfoResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Store context tags as arbitary string-to-string map
+    //
+    // Since 1.11
+    // rpc set_context_info (SetContextInfoRequest) returns (SetContextInfoResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Value set by protocol scripts to define the purpose of the script. Gets this value
+    //
+    // Since 1.11
+    // rpc get_protocol_purpose (GetProtocolPurposeRequest) returns (GetProtocolPurposeResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Sets the protocol purpose. See also get_protocol_purpose
+    //
+    // Since 1.11
+    // rpc set_protocol_purpose (SetProtocolPurposeRequest) returns (SetProtocolPurposeResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Links an epi2me workflow reference to a run id.
+    //
+    // Since 1.15
+    // rpc add_epi2me_workflow (AddEpi2meWorkflowRequest) returns (AddEpi2meWorkflowResponse) {}
+
+    // List all used protocol group ids used in any previous protocol on the box.
+    //
+    // Since 3.2
+    // rpc list_protocol_group_ids(ListProtocolGroupIdsRequest) returns (ListProtocolGroupIdsResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Run a hardware check on the connected flow cell.
+    //
+    // Throws an error if there is no flow cell connected.
+    //
+    // Since 4.3
+    // rpc begin_hardware_check(BeginHardwareCheckRequest) returns (BeginHardwareCheckResponse) {
+    //     option (experimental) = true;
+    // }
+
+    // Run platform qc on the connected flow cell
+    //
+    // Throws an error if there is no flow cell connected.
+    //
+    // Since 4.3
+    // rpc begin_platform_qc(BeginPlatformQcRequest) returns (BeginPlatformQcResponse) {
+    //     option (experimental) = true;
+    // }
+
+    // Run protocol on the connected flow cell
+    //
+    // The protocol must be described by a toml file. The request identifies the
+    // protocol and supplies overrides to the default protocol-settings described
+    // in the toml file, in addition it provides user-info for the experiment.
+    //
+    // Throws an error if there is no flow cell connected.
+    //
+    // Since 5.0
+    // rpc begin_protocol(BeginProtocolRequest) returns (BeginProtocolResponse) {
+    //     option (experimental) = true;
+    // }
+
+    // rpc set_platform_qc_result(SetPlatformQcResultRequest) returns (SetPlatformQcResultResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Associated a post processing analysis process, and schedule it to run once the protocol is complete.
+    //
+    // If the protocol is already complete, the post proecssing analysis is executed immediately.
+    //
+    // Since 4.4
+    // rpc associate_post_processing_analysis_for_protocol(AssociatePostProcessingAnalysisRequest) returns (AssociatePostProcessingAnalysisResponse) {}
+
+    // Clears history data for specified protocol(s)
+    //
+    // History data includes protocol protocol info, acquisition info and statistics.
+    //
+    // Also clears any persistence data that has been written to disk for those protocols -- this
+    // data will not be available after a restart.
+    //
+    // Does NOT clear experiment results (fast5, fastq, sequencing_summary, etc)
+    //
+    // Since 4.4
+    //
+    // rpc clear_protocol_history_data(ClearProtocolHistoryDataRequest) returns (ClearProtocolHistoryDataResponse) {}
+
+    // This RPC should only be used by the protocol script.
+    //
+    // The protocol script can call this to opt in to protocol phase management. It can report the
+    // phase it is currently in, and handle requests to change phase.
+    //
+    // Only one call to this RPC is possible at once. Ending the call will reset the phase to
+    // PHASE_UNKNOWN and clear any set capabilities.
+    //
+    // Since 4.4.
+    // rpc protocol_phase_management (stream ProtocolPhaseManagementRequest)
+    //                       returns (stream ProtocolPhaseManagementResponse) {}
+
+
+    // Generate a run report and return the report data.
+    //
+    // If the protocol selected for report generation is already complete the report is a completed report, otherwise
+    // the report will be from the in progress protocol.
+    //
+    // Since 5.0
+    // rpc generate_run_report(GenerateRunReportRequest) returns (stream GenerateRunReportResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
 }
 
 message BarcodeUserData {
@@ -103,12 +314,28 @@ message OffloadLocationInfo {
     //
     // Valid `location_id`s can be retrieved using mooneye.offload_manager.list_offload_locations()
     //
+    // If any `offload_location_ids` are specified, then:
+    //   - Data is not stored locally
+    //   - `offload_location_path` must NOT be set (or must be set to an empty value)
+    //      - The `offload_location_ids` indicate that data should be offloaded, rather than
+    //        stored locally; the `offload_location_path` is used to set a local storage location.
+    //      - If both are set, an error is returned
+    //
     // This requires a running instance of Mooneye
     //
     // Since 5.0.
     repeated string offload_location_ids = 1;
 
     // Local, e.g., internal / external drive, paths to where the protocol output will be stored.
+    //
+    // This setting overrides the default output locations (as set through configuration files
+    // and/or the instance service).
+    //
+    // If `offload_location_path` is set to a non-empty value, then:
+    //  -  `offload_location_ids` MUST be empty
+    //      - The `offload_location_ids` indicate that data should be offloaded, rather than
+    //        stored locally; the `offload_location_path` is used to set a local storage location.
+    //      - If both are set, an error is returned
     //
     // This does not require a running instance of Mooneye
     //
@@ -130,6 +357,12 @@ message StartProtocolRequest {
     //
     // Since 5.0.
     OffloadLocationInfo offload_location_info = 4;
+
+    // Initial Target Run-Until Criteria to use when starting an acquisition for this protocol.
+    // These can be updated during the acquisition using the Run-Until API.
+    //
+    // Since 5.3
+    acquisition.TargetRunUntilCriteria target_run_until_criteria = 5;
 }
 
 message StartProtocolResponse {
@@ -275,6 +508,26 @@ enum ProtocolState {
 
     // The protocol was terminated because MinKNOW could not send telemetry to start acquisition.
     PROTOCOL_FINISHED_UNABLE_TO_SEND_TELEMETRY = 7;
+
+    // The protocol was terminated because the flow cell was disconnected
+    PROTOCOL_FINISHED_WITH_FLOW_CELL_DISCONNECT = 8;
+
+    // The protocol was terminated because the device was disconnected
+    PROTOCOL_FINISHED_WITH_DEVICE_DISCONNECT = 9;
+
+    // Enums 20-120 are "reserved" for any new script exit codes we may want to forward
+
+    // The protocol has reported and error during calibration
+    PROTOCOL_FINISHED_WITH_ERROR_CALIBRATION = 20;              // Exit with code 20
+
+    // Setting basecall settings failed (Bad config etc)
+    PROTOCOL_FINISHED_WITH_ERROR_BASECALL_SETTINGS = 21;        // Exit with code 21
+    
+    // OND requires us to reach temperature and fail if not
+    PROTOCOL_FINISHED_WITH_ERROR_TEMPERATURE_REQUIRED = 22;     // Exit with code 22
+
+    // The protocol was terminated due to insufficient disk space
+    PROTOCOL_FINISHED_WITH_ERROR_NO_DISK_SPACE = 23;            // Exit with code 23
 }
 
 enum ProtocolPhase {
@@ -305,11 +558,47 @@ enum ProtocolPhase {
     // It should move into PHASE_PAUSED within a short time.
     PHASE_PAUSING = 6;
 
+    // The protocol is paused due to high temperature
+    //
+    // The user will have to confirm if they want to proceed with sequencing before resuming
+    PHASE_BAD_TEMPERATURE_AUTOMATIC_PAUSE = 8;
+
     // The protocol is in the process of resuming from a paused state.
     //
     // It should move into another phase, such as PHASE_SEQUENCING or PHASE_PREPARING_FOR_MUX_SCAN,
     // in a short time.
     PHASE_RESUMING = 7;
+}
+
+message RequestOrigin {
+    // 'User' based changes will typically come from calls made by the UI
+    // such as 'stop_protocol'
+    message User {
+        // If available then provide any identity information MinKNOW 
+        // has about the client that made the RPC request
+        string identity = 1;
+    }
+    // A request from minknow will usually come in the form of something ending
+    // naturally, or an error occuring where minknow has to take action
+    message MinKNOW {
+        // Optional further details on the cause of the request
+        string cause = 1;
+    }
+    // The protocol script/bream is mainly responsible for making changes via
+    // protocol_phase_management
+    message ProtocolPhaseManagement {}
+    // A request made by the run until script due to certain criteria being met
+    message RunUntil {
+        // What criteria caused the state change
+        string criteria = 1;
+    }
+
+    oneof origin {
+        User user = 1;
+        MinKNOW minknow = 2;
+        ProtocolPhaseManagement protocol_phase_management = 3;
+        RunUntil run_until = 4;
+    }
 }
 
 message Epi2meWorkflowReference {
@@ -343,6 +632,96 @@ message ExternalOffload {
     // The `id`s associated with active external data offloads associated with the protocol
     // The offload status can be queried using `mooneye.offload_manager.watch_offloads()``
     repeated string offload_ids = 1;
+}
+
+// From instance.proto
+//
+// Since 5.6
+message GetVersionInfoResponse {
+    message MinknowVersion {
+        int32 major = 1;
+        int32 minor = 2;
+        int32 patch = 3;
+        string full = 4;
+    }
+
+    // What minknow version is installed. Split into major, minor and patch versions
+    // Also includes the full version as a string, which contain the major, minor and patch numbers
+    // as well as if the version is pre-release version (-pre), whether it is a release candidate (-rc#)
+    // or whether it is a variant version (i.e. for conferences) (-variant). For non-release builds it also 
+    // includes the hash of the commit it is based on, and whether the working copy is different from that has (-dirty)
+    MinknowVersion minknow = 1;
+
+    // The version of Bream that is installed.
+    //
+    // An invalid installation will cause this to return "0.0.0".
+    //
+    // Prior to 5.0, this field was called "protocols".
+    //
+    // Since 5.0
+    string bream = 2;
+
+    // Describes the distribution that this MinKNOW installation is part of, usually
+    // this will be the Metapackage version number/identity, this will be "unknown"
+    // if the distribution-version hasn't been set. This information is also communicated
+    // in the Manager's DaemonMessage in daemon.proto
+    string distribution_version = 3;
+
+    enum DistributionStatus {
+        UNKNOWN  = 0; // The distribution status is unknown or can not be determined
+        STABLE   = 1; // Released software in that same configuration in which
+                      // it was distributed.
+        UNSTABLE = 2; // Pre-release or release-candidate software that has not
+                      // been fully tested, but has not been modified from how it
+                      // was distributed.
+        MODIFIED = 3; // Some or all components have been replaced after distribution
+    }
+    // Indicates if the MinKNOW distribution including components such as Bream
+    // are stable, unstable or have been modified.
+    DistributionStatus distribution_status = 4;
+
+    // The version of the protocol configuration files that is installed.
+    //
+    // An invalid installation will cause this to return "0.0.0".
+    //
+    // Prior to 5.0, this field was called "configuration".
+    //
+    // Since 5.0
+    string protocol_configuration = 5;
+
+    enum InstallationType {
+        // For internal release. production.proto will be enabled for this type
+        ONT = 0;
+
+        // For customer releases
+        NC = 1;
+
+        // For production release. production.proto will be enabled for this type
+        PROD = 2;
+
+        // For Q releases (nanopore long term support release)
+        Q_RELEASE = 3;
+
+        // Oxford Nanopore Diagnostic
+        OND_RELEASE = 4;
+    }
+
+    // The installation type of MinKNOW.
+    //
+    // The installation type may affect the available features, or the update process.
+    //
+    // Since 4.1
+    InstallationType installation_type = 6;
+
+    // Version of guppy MinKNOW was packaged against.
+    //
+    // Since 5.0
+    string guppy_build_version = 7;
+
+    // Version of guppy MinKNOW running with.
+    //
+    // Since 5.0
+    string guppy_connected_version = 8;
 }
 
 message ProtocolRunInfo {
@@ -418,6 +797,14 @@ message ProtocolRunInfo {
     // Unset if the protocol is still running.
     google.protobuf.Timestamp end_time = 6;
 
+    // Who is responsible for stopping the protocol
+    //
+    // Candidates:
+    //  MinKNOW:     Any error that causes the protocol to stop
+    //  UI:          Through stop_protocol API
+    //  RunUntil:    Through stop criteria
+    RequestOrigin stop_origin = 23;
+
     // A list of acquisition periods started whilst this protocol was running.
     //
     repeated string acquisition_run_ids = 7;
@@ -458,21 +845,47 @@ message ProtocolRunInfo {
     //
     // Since 5.0
     ExternalOffload external_offload = 21;
+    
+    // For storing version numbers to output to run report
+    //
+    // Since 5.6
+    GetVersionInfoResponse software_versions = 22;
 }
 
 message FilteringInfo {
-    // Intialising this message a filter like `pqc_filter` will imply to restrict results to
-    // that type only.
-    // 
-    // Each filter type should also be using wrapper types for each individual value, to
-    // allow for specific filtering within each type
-
     message PlatformQcFilter {
         optional string flow_cell_id = 1;
     }
 
+    // Filter by runs that have platform QC results
+    //
+    // Just initialising this message is enough to filter out runs with
+    // platform QC results from ones that don't
+    //
+    // Further filtering on the platform QC results can be applied by using
+    // the fields within PlatformQcFilter
     PlatformQcFilter pqc_filter = 1;
-    
+
+    // Filter runs by a specific protocol_group_id
+    optional string protocol_group_id = 2;
+
+    // Filter by start time of the run.  If the start time falls within the
+    // specified time period, then the run will be included.
+    //
+    // If no start_time is specified, then this will match all runs
+    // before the specified end time.
+    //
+    // If no end_time is specified, then this will match all runs
+    // later than the specified start time.
+    //
+    // Since 5.5.
+
+    message TimeFilter {
+        google.protobuf.Timestamp start_range = 1;
+        google.protobuf.Timestamp end_range = 2;
+    }
+
+    TimeFilter experiment_start_time = 3;
 }
 
 message ListProtocolRunsRequest {
@@ -534,15 +947,40 @@ message AddEpi2meWorkflowRequest {
 
 message AddEpi2meWorkflowResponse {
 }
+    
+// timestamp for the last activity for experiment ordering
+// since 5.6
+message ProtocolGroupIdInfo {
+    string protocol_group_id = 1;
+    
+    // Most recent start time for the protocol group id
+    // 
+    google.protobuf.Timestamp start_time = 2;
+}
 
 message ListProtocolGroupIdsRequest {
+    FilteringInfo filter_info = 1;
 }
 
 message ListProtocolGroupIdsResponse {
     // A list of protocol group ids used in any
     // protocol started on this instance of minknow.
     //
+    // deprecated and replaced by string protocol_group_id
+    // in message ProtocolGroupIdInfo
+    // 
+    // string data is guaranteed to be ordered by most recent
+    // start time, since 5.6
+    // 
     repeated string protocol_group_ids = 1;
+    
+    // A list of the most recent start time for each
+    // protocol group id on this instance of minknow.
+    // 
+    // guaranteed to be ordered by most recent start time
+    // since 5.6
+    // 
+    repeated ProtocolGroupIdInfo protocol_group_ids_info = 2;
 }
 
 message BeginHardwareCheckRequest {}
@@ -579,6 +1017,12 @@ message BeginProtocolRequest {
     //
     // Since 5.0.
     OffloadLocationInfo offload_location_info = 5;
+
+    // Initial Target Run-Until Criteria to use when starting an acquisition for this protocol.
+    // These can be updated during the acquisition using the Run-Until API.
+    //
+    // Since 5.3
+    acquisition.TargetRunUntilCriteria target_run_until_criteria = 6;
 
     // Any settings changed from the defaults specified in the protocol's .toml file.
     map<string, protocol_settings.ProtocolSetting.ProtocolSettingValue> settings = 4;
@@ -681,6 +1125,10 @@ message ProtocolPhaseManagementResponse {
 message GenerateRunReportRequest {
     // The protocol_run_id to generate a report for.
     string protocol_run_id = 1;
+
+    // Optionally return the input data used to generate the report. This input data is
+    // represented as the data seen in report_data.proto
+    bool include_input_data = 2;
 }
 
 message GenerateRunReportResponse {
@@ -692,4 +1140,12 @@ message GenerateRunReportResponse {
 
     // How many further characters of data remain after this message (excluding of this message).
     int32 remaining_length = 3;
+
+    // If include_input_data was set, this will be a section of that data
+    // (note the api to return this data may stream back several sections).
+    string input_data = 4;
+
+    // If include_input_data was set, how many further characters of input data remain 
+    // after this message (excluding of this message).
+    int32 remaining_input_length = 5;
 }

@@ -5,10 +5,50 @@ package minknow_api.acquisition;
 option java_package = "com.nanoporetech.minknow_api";
 option objc_class_prefix = "MKAPI";
 
+import "minknow_api/run_until.proto";
 import "minknow_api/rpc_options.proto";
 import "google/protobuf/timestamp.proto";
 
 service AcquisitionService {
+    // Starts reading data from the device
+    //
+    // Some setup calls will need to be made before starting data acquisition: particularly setting the analysis configuration,
+    // calibration, read writer and bulk writer config and some device calls such as setting the sampling frequency
+    //
+    // If acquisition is already running (even in the FINISHING state), this call will fail.
+    //
+    // On MinIONs and GridIONs, this will enable the ASIC power supply if it is not already enabled.
+    // See StopRequest.keep_power_on for more details about the implications of this.
+    //
+    // The rpc will return once `current_status` is "PROCESSING" or an error occurs and acquisition fails to start.
+    // rpc start (StartRequest) returns (StartResponse) {}
+
+    // Stops data acquisition.
+    //
+    // Can specify a stop mode that handles what is done with the data when data acquisition is stopped. Refer to the enum
+    // description for documentation on what each mode does.
+    //
+    // Be aware that this command will return as soon as Minknow enters the FINISHING state and not the READY state.
+    // So if starting a new experiment then you will have to wait for the READY state separately
+    // rpc stop (StopRequest) returns (StopResponse) {}
+
+    // Watches for status changes within MinKNOW. Status states are defined from MinknowStatus enum.
+    // This is a bi-directional stream where the incoming response stream will return every time the status has changed
+    // and the request stream is used to stop the watcher. Refer to http://www.grpc.io/docs/tutorials/basic/python.html
+    // to see how bi-directional streaming works in grpc, but essentially when calling this function the user will have
+    // to pass in a generator that will eventually yield a WatchForStatusChangeRequest(stop=True) to the cpp side.
+    // A wrapper class for this is provided in the Python code.
+    //
+    // The function will first return with the current status that MinKNOW is in. Every response thereafter will be a
+    // change from one status to another.
+    //
+    // The ERROR_STATUS state includes errors during transition between states. If that happens, MinKNOW will
+    // try to revert to the READY state. It is up to the user to determine if they wish to try to wait for MinKNOW to
+    // correct itself or to try some other course of action
+    // rpc watch_for_status_change (stream WatchForStatusChangeRequest) returns (stream WatchForStatusChangeResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
     // Returns current acquisition run info and streams any changes to the current acquisition
     //
     // This call can be made even if acquisition is not running. In this case, the next streamed
@@ -33,7 +73,25 @@ service AcquisitionService {
     rpc get_progress (GetProgressRequest) returns (GetProgressResponse) {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
-        // Returns the name and run id of the currently running acquisition.
+
+    // Gets information about an acquisition run, run within this instance on MinKNOW.
+    //
+    // If no run ID is provided, information about the most recently started acquisition run is
+    // provided.
+    //
+    // Since 1.11
+    rpc get_acquisition_info (GetAcquisitionRunInfoRequest) returns (AcquisitionRunInfo) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    }
+
+    // Gets information about all previous acquisitions.
+    //
+    // Since 1.11
+    // rpc list_acquisition_runs (ListAcquisitionRunsRequest) returns (ListAcquisitionRunsResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Returns the name and run id of the currently running acquisition.
     //
     // Will fail with FAILED_PRECONDITION if there is no acquisition running
     //
@@ -42,6 +100,38 @@ service AcquisitionService {
         option idempotency_level = NO_SIDE_EFFECTS;
     }
 
+    // Specify the signal reader to use
+    //
+    // Since 3.6
+    // rpc set_signal_reader (SetSignalReaderRequest) returns (SetSignalReaderResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Set the bream information for the current acquisition.
+    //
+    // This should only be called by the protocol. It will only affect the last acquisition that was
+    // started in the current protocol.
+    //
+    // If no protocol is running, or no acquisition has been started during the current protocol, a
+    // FAILED_PRECONDITION error will be returned.
+    //
+    // Since 5.0
+    // rpc set_bream_info (SetBreamInfoRequest) returns (SetBreamInfoResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Add a mux scan result to the bream information for the current acquisition.
+    //
+    // This should only be called by the protocol. It will only affect the last acquisition that was
+    // started in the current protocol.
+    //
+    // If no protocol is running, or no acquisition has been started during the current protocol, a
+    // FAILED_PRECONDITION error will be returned.
+    //
+    // Since 5.0
+    // rpc append_mux_scan_result (MuxScanResult) returns (AppendMuxScanResultResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
 }
 
 //
@@ -98,7 +188,6 @@ enum Purpose {
 //
 // Protobuf messages for input/output of RPC calls
 //
-
 message StartRequest {
     // Prevent waiting until the device is ready before starting acquisition.
     //
@@ -730,6 +819,11 @@ message BreamInfo {
     Range target_temperature = 5;
 }
 
+message TargetRunUntilCriteria {
+    run_until.CriteriaValues pause_criteria = 1;
+    run_until.CriteriaValues stop_criteria = 2;
+}
+
 message AcquisitionRunInfo {
     // The unique identifier assigned to this acquisition run.
     //
@@ -796,6 +890,12 @@ message AcquisitionRunInfo {
 
     // Set information provided by the Bream toolkit.
     BreamInfo bream_info = 15;
+
+    // Target Run-Until Critiera, used to determine when the acquisition should be paused
+    // or stopped.
+    //
+    // Since 5.3
+    TargetRunUntilCriteria target_run_until_criteria = 16;
 }
 
 message ListAcquisitionRunsRequest {

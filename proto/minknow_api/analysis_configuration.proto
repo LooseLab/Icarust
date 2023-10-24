@@ -9,14 +9,180 @@ import "google/protobuf/wrappers.proto";
 import "minknow_api/rpc_options.proto";
 
 service AnalysisConfigurationService {
+    // Get the analysis configuration
+    rpc get_analysis_configuration (GetAnalysisConfigurationRequest) returns (AnalysisConfiguration) {
+        option idempotency_level = NO_SIDE_EFFECTS;
+    };
+
+    // Sets the analysis configuration
+    //
+    // This sets the whole configuration as-is, so you have to specify the whole analysis configuration as any fields
+    // there previously will be overwritten. To preserve the current analysis configuration, use a get-modify-set
+    // approach. Use get_analysis_configuration to retrieve the current config and modify the fields on that copy.
+    // Then use this call to set the modified version.
+    //
+    // The AnalysisConfiguration message is converted to/from json in Minknow, but this will be removed from later
+    // versions of MinKNOW. The basecaller params are the first ones to move away from the jsn format. The old structure
+    // has been kept for backwards compatibility, but it will be removed.
+    //
+    // The AnalysisConfiguration message is intended to be used to convert easily from protobuf to json and back again.
+    // To convert from json to a protobuf message (assuming 'analysis_conf_json' holds the json data:
+    //
+    // >>> import minknow_api
+    // >>> from google.protobuf import json_format
+    // >>>
+    // >>> analysis_conf_pb = minknow_api.analysis_configuration_service.AnalysisConfiguration()
+    // >>> json_format.Parse(json.dumps(analysis_conf_json), analysis_conf_pb)
+    //
+    // To convert from a protobuf message to json:
+    //
+    // >>> json_data = json_format.MessageToJson(analysis_conf_resp, preserving_proto_field_name=True, including_default_value_fields=True)
+    //
+    // 'preserving_proto_field_name' is needed because json_format will try convert keys to json-standard(?) format, like converting
+    // my_key to myKey, and the key names as seen in the protobuf file are important to minknow
+    //
+    // 'including_default_value_fields' is needed because in proto3, primitive values that are default initialised (like a uint32 with value 0)
+    // will not be sent on the wire, so the value wouldn't appear when converting to json. In practice, most values are wrapper types and this
+    // field won't have an affect in wrapper types, but it does affect enum types as the default initailised value is the 0th enum.
+    //
+    // NOTE: if the analysis configuration was set using the new parameters (with the filename for basecalling config files), the old parameters
+    // from jsn will be ignored. So set_analysis_configuration must be used with either the old protobuf message for the basecaller parameters,
+    // or with the new one, but it cannot be used interleaved!
+    // rpc set_analysis_configuration (AnalysisConfiguration) returns (SetAnalysisConfigurationResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // };
+
+    // Reset the analysis configuration
+    //
+    // The configuration will be set to the initial default configuration that was set on boot
+    //
+    // Since 3.0
+    // rpc reset_analysis_configuration (ResetAnalysisConfigurationRequest) returns (ResetAnalysisConfigurationResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // };
+
+    // Enable or disable analysis entirely.
+    // rpc set_analysis_enabled_state (SetAnalysisEnabledStateRequest) returns (SetAnalysisEnabledStateResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // };
+
+    // Get a description of the possible channel states.
+    //
+    // This is a subset of the information included in the channel states section of the analysis
+    // configuration. It will change when the analysis configuration changes.
+    // rpc get_channel_states_desc (GetChannelStatesDescRequest) returns (GetChannelStatesDescResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // };
+
+    // Get a brief summary of the analysis configuration.
+    //
+    // This is a high-level overview of what major parts of the analysis pipeline are enabled.
+    // rpc get_summary (GetSummaryRequest) returns (GetSummaryResponse) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // };
+
+    // Configure the basecaller which will run during acquisition.
+    //
+    // This rpc will result in an error if invoked during acquisition.
+    //
+    // By default no basecalling is performed (enable = false).
+    //
+    // Since 3.0
+    // rpc set_basecaller_configuration(SetBasecallerConfigurationRequest) returns (SetBasecallerConfigurationResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Inform MinKNOW the passed basecall configuration will be used at some point in the future, and could be loaded now
+    // to reduce wait time in the future.
+    //
+    // This rpc will result in an error if invoked during acquisition.
+    //
+    // The call will block until any previous call to preload configs is complete, but does not block while the config
+    // is loaded, no errors are reported to the caller if the config is invalid.
+    //
+    // Since 4.1
+    // rpc preload_basecaller_configuration(SetBasecallerConfigurationRequest) returns (SetBasecallerConfigurationResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Find the current basecaller configuration (see #set_basecaller_configuration)
+    //
+    // Since 3.0
+    // rpc get_basecaller_configuration(GetBasecallerConfigurationRequest) returns (BasecallerConfiguration) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Get the pore type configuration
+    //
+    // Since 3.2
+    // rpc get_pore_type_configuration(GetPoreTypeConfigurationRequest) returns (PoreTypeConfiguration) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
+
+    // Set the pore type configuration
+    //
+    // By default, the configuration for all wells is "not_set"
+    // (global_pore_type set to "not_set")
+    //
+    // This rpc will result in an error if new pore types are defined during acquisition.
+    // The pore type which is active on specific channel/well may be changed during acquisition.
+    //
+    // If an invalid PoreTypeConfiguration is supplied, an error will be returned
+    // Invalid PoreTypeConfiguration include those where:
+    //
+    //  - No pore_type_config is set
+    //  - A pore type is set to an empty string
+    //  - A pore type is set to "invalid"
+    //
+    // If an error is returned, the pore type configuration is not updated.
+    //
+    // Since 3.2
+    // rpc set_pore_type_configuration(PoreTypeConfiguration) returns (SetPoreTypeConfigurationResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Set the writer configuration.
+    //
+    // Note: Calling this method overrides any previous settings stored for the writers.
+    // In order to preserve settings, you should call #get_writer_configuration, mutate
+    // the config, then call this method.
+    //
+    // Will fail with FAILED_PRECONDITION if acquisition is running.
+    //
+    // The default writer config is to write nothing to disk.
+    //
+    // Since 3.3
+    // rpc set_writer_configuration (WriterConfiguration) returns (SetWriterConfigurationResponse) {
+    //     option idempotency_level = IDEMPOTENT;
+    // }
+
+    // Get the currently active writer configuration.
+    //
+    // Since 3.3
+    // rpc get_writer_configuration (GetWriterConfigurationRequest) returns (WriterConfiguration) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // }
 
     // Get a map of read classifications mapped to id (used internally in analysis).
     //
     // This will change when the analysis configuration changes.
     rpc get_read_classifications (GetReadClassificationsRequest) returns (GetReadClassificationsResponse) {
         option idempotency_level = NO_SIDE_EFFECTS;
-    };
+    }
 
+
+    // Get the dynamic analysis configuration - this configuration can be changed during acquisition periods,
+    // and is reset at the start of acquisition.
+    // rpc get_dynamic_analysis_configuration (GetDynamicAnalysisConfigurationRequest) returns (DynamicAnalysisConfiguration) {
+    //     option idempotency_level = NO_SIDE_EFFECTS;
+    // };
+
+    // Set the dynamic analysis configuration, used during 
+    //
+    // This can be changed during an acquisition period, and should be called as new values become appropriate.
+    // The new analysis parameters will be used after any data already received has been processe.
+    // rpc set_dynamic_analysis_configuration(DynamicAnalysisConfiguration) returns (SetDynamicAnalysisConfigurationResponse) { }
+    
 }
 
 message EventDetection {
@@ -25,7 +191,7 @@ message EventDetection {
 
     // The peak detection must be above this threshold at a minimum for it to be detected
     // as an event.
-    double threshold = 5;
+    // double threshold = 5;
 
     // When analysing the tstat peaks, if the jump between one value and another is higher than
     // than 'peak_height', then it will "arm" the peak detector and move onto the next phase.
@@ -33,19 +199,19 @@ message EventDetection {
     // And what goes up must come down.
     // Once it has detected a peak going up, it will also have to go down by 'peak_height'
     // in order for the peak to be classified as a found event
-    double peak_height = 9;
+    // double peak_height = 9;
 
     // Conversion factor used to convert from events to bases.
     //
     // This is used to estimate bases for various rpc feeds from minknow.
-    google.protobuf.DoubleValue events_to_base_ratio = 16;
+    // google.protobuf.DoubleValue events_to_base_ratio = 16;
 
     // Whether to break events on mux changes.
     //
     // This will eliminate "mux_uncertain" events and reads. Note that this will cause starting or
     // stopping unblocking to break events as well (even though the mux does not normally change in
     // this case).
-    bool break_on_mux_changes = 17;
+    // bool break_on_mux_changes = 17;
 
     // Control the number of samples MinKNOW will shift mux changes back by in order to align mux changes
     // with event boundaries.
@@ -57,23 +223,23 @@ message EventDetection {
     // recorded the change as active. Mux changes are never shifted forwards.
     //
     // A value of 0 will disable shifting of mux changes.
-    uint32 max_mux_change_back_shift = 18;
+    // uint32 max_mux_change_back_shift = 18;
 }
 
 message ReadDetectionParams {
-    enum ReadDetectionMode {
-        none = 0;
-        transition = 1;
-        lookback = 2;
-        minmax = 3;
-    }
+    // enum ReadDetectionMode {
+    //     none = 0;
+    //     transition = 1;
+    //     lookback = 2;
+    //     minmax = 3;
+    // }
 
-    ReadDetectionMode mode = 1;
-    double minimum_delta_mean = 2;
-    uint32 look_back = 3;
-    google.protobuf.UInt32Value break_reads_after_events = 4;
+    // ReadDetectionMode mode = 1;
+    // double minimum_delta_mean = 2;
+    // uint32 look_back = 3;
+    // google.protobuf.UInt32Value break_reads_after_events = 4;
     google.protobuf.DoubleValue break_reads_after_seconds = 5;
-    bool break_reads_on_mux_changes = 6;
+    // bool break_reads_on_mux_changes = 6;
 
     // The following parameters define a range of pA which a read must enter/leave in order
     // to trigger a read break.
@@ -85,21 +251,21 @@ message ReadDetectionParams {
     // or the tracked open_pore section, if tracking is being used.)
     //
     // This value must be <= 0.0 if tracking is being used.
-    google.protobuf.DoubleValue open_pore_min = 7;
+    // google.protobuf.DoubleValue open_pore_min = 7;
 
     // The maximum level which is considered open pore (this value is relative to open_pore_default
     // or the tracked open_pore section, if tracking is being used.)
     //
     // This value must be >= 0.0 if tracking is being used.
-    google.protobuf.DoubleValue open_pore_max = 8;
+    // google.protobuf.DoubleValue open_pore_max = 8;
 
     // The default value to use for open pore, either when tracking isn't being used, or when
     // open pore tracking has no value currently.
-    google.protobuf.DoubleValue open_pore_default = 9;
+    // google.protobuf.DoubleValue open_pore_default = 9;
 
     // Minimum number of seconds events must lie within the range of open pore in order to allow
     // a read to break.
-    google.protobuf.DoubleValue open_pore_seconds_required = 10;
+    // google.protobuf.DoubleValue open_pore_seconds_required = 10;
 }
 
 // Parameters for filtering out reads from being written.
@@ -198,9 +364,34 @@ message ReadClassificationParams {
     //
     // 'ultimate':      Chooses the last (ultimate) read chunk's classification
     // 'penultimate':   Chooses the second-to-last read chunk's clasification
-    // 'modal':         Chooses the most common classification out of the all read chunks
+    // 'modal':         Chooses the most common classification out of all read chunks
+    // 'threshold':     Chooses a classification based on the combination of threshold parameters.
+    //                  If selected, values for the "selected_classifications_fraction_required"
+    //                  and "selected_chunks_required" fields will be used to determine the
+    //                  read classification (see below).
+    //
     string classification_strategy = 4;
     Parameters parameters = 5;
+
+    // For the "threshold" classification strategy, specify the minimum fraction (in duration) of a completed read
+    // that needs to be in any of the "selected_classifications".
+    // For example, using 0 means that all reads will written out unless further constrained by the
+    // "selected_classifications_chunk_required" field.
+    //
+    // Note that this option only applies to the 'threshold' classification strategy and will be ignored
+    // for other classification strategies.
+    //
+    google.protobuf.DoubleValue selected_classifications_fraction_required = 9;
+
+    // For the "threshold" classification strategy, specify the minimum number of chunks of a completed read
+    // that needs to be in any of the "selected_classifications".
+    // For example, using 1 means that the entire read will be written if ANY chunk has a classification in
+    // "selected_classifications" unless further constrained by the "selected_classifications_fraction_required" field.
+    //
+    // Note that this option only applies to the 'threshold' classification strategy and will be ignored
+    // for other classification strategies.
+    //
+    google.protobuf.UInt32Value selected_classifications_chunks_required = 10;
 }
 
 message ChannelStates {
@@ -294,8 +485,13 @@ message ChannelStates {
     }
 
     message Group {
+        // TODO: group styling and description should not be defined here, as this
+        // allows channel states to declare themselves as being part of the same group
+        // but specify different styling and descriptions.
+
         string name = 1;
         Style style = 2;
+        string description = 3;
     }
 
     Group group = 2;
@@ -307,12 +503,68 @@ message ChannelStates {
 message GetAnalysisConfigurationRequest {
 }
 
+
+// Since 5.3
+message ReadScalingParams
+{
+    // Quantile Information:
+
+    // Position of quantiles in scaling data to use when computing scale parameters.
+    repeated float quantile_locations = 3;
+
+    // If present, must be the same length as quantile_locations.
+    // Represents the coefficients that shall be multiplied with measured quantiles to give a predicted_shift
+    repeated float quantile_weights_shift = 1;
+
+    // If present, must be the same length as quantile_locations.
+    // Represents the coefficients that shall be multiplied with measured quantiles to give a predicted_scale
+    repeated float quantile_weights_scale = 2;
+
+    // Tracking Information:
+
+    // Alpha value to use in ewma calculation for scale and shift tracking. 1 updates instantly. 0 does not update.
+    float tracking_alpha = 4;
+
+    // Alpha decay value to use. Higher values cause a more rapid decay in greater trust of earlier numbers.
+    float alpha_number_estimates_decay = 5;
+
+    // Maximum difference in event quantiles which will be added into trackers. 
+    // This is used to filter away cases where pore signal is included in the read and thus cannot be trusted.
+    float quantile_maxdiff = 10;
+
+
+    // Maximum fraction change between one tracked value and the next which will be trusted. Higher values are not trusted.
+    float trust_limit_fraction = 6;
+
+    // Event collection Params:
+
+    // The minimum difference between an event and the next to include it in the subsampling
+    float diff_threshold = 7;
+
+    // After how many cumulative pA is a new event emitted in the subsampling
+    float emission_threshold = 8;
+
+    // Cumulative pA sum required to compute scaling. Any events after this sum are not considered in scaling.
+    float dacs_breakpoint = 9;
+
+    // Scale factor applied to conductance to produce a basic scale estimate, also combined with q90_q10_to_normal.
+    float conductance_factor_scale = 11;
+    
+    // Scale factor applied to conductance to produce a basic shift estimate.
+    float conductance_factor_shift = 12;
+    float q90_q10_to_normal = 13;
+}
+
 message AnalysisConfiguration {
     EventDetection event_detection = 1;
     ReadDetectionParams read_detection = 2;
 
-    ReadClassificationParams read_classification = 4;
-    map<string, ChannelStates> channel_states = 7;
+    // ReadClassificationParams read_classification = 4;
+    // map<string, ChannelStates> channel_states = 7;
+    
+    // Add read scale tracking to the pipeline.
+    // If this message is unspecified, read scaling is not enabled.
+    // ReadScalingParams read_scaling = 8;
 }
 
 message SetAnalysisConfigurationResponse {
@@ -437,6 +689,12 @@ message BarcodingConfiguration
     //
     // Maximum value is 100, defaults to 40. 
     google.protobuf.FloatValue min_score_mask = 8;
+        
+    // If set, barcodes that aren't in barcode user data list will be ignored
+    //
+    // Since 5.6
+    bool ignore_unspecified_barcodes = 9;
+
 }
 
 // Since 4.0
@@ -444,7 +702,7 @@ message AlignmentConfiguration
 {
     // Provide an index to align reads against once basecalled.
     //
-    // Any acceptable referece format to guppy can be passed here:
+    // Any acceptable reference format to guppy can be passed here:
     //   - fasta reference file
     //   - minimap index file
     repeated string reference_files = 1;
@@ -521,7 +779,23 @@ message BasecallerConfiguration
     // which guppy should locate (see guppy application config entry: "data_path")
     string config_filename = 1;
 
+    // Enable or disable pass/fail filtering based on alignment.  When enabled, reads which
+    // do not align to any references will be marked as "failed", and written to the folder
+    // specified in MinKNOW configuration for failed reads.  
+    //
+    // The setting applies to both regular read filtering and target filtering; if it is 
+    // enabled, then a read will not be marked as a target read if it does not align to a reference.
+    //
+    // Default setting is false, i.e. disabled.
+    //
+    // Since 5.4
+    bool align_filter = 10;
+
     // Control how read filtering is applied to output of basecaller.
+    // These settings determine whether a read is marked as "passed"
+    // or "failed".  Reads are written to different folders based on
+    // the result of this filtering.  Those folders are specified in
+    // MinKNOW configuration.
     //
     // If no filtering parameters are provided then reads will not
     // be filtered.
@@ -534,6 +808,12 @@ message BasecallerConfiguration
     BarcodingConfiguration barcoding_configuration = 4;
 
     // Control how target filtering is applied to output of basecaller.
+    // Reads which pass these filtering criteria will be marked as
+    // "target" reads, and will be written to a separate folder; this 
+    // folder is specified in MinKNOW configuration.  Reads which do 
+    // not pass these criteria will have the regular read filtering
+    // applied to them, as specified by the `read-filtering` settings
+    // above.
     //
     // If no filtering parameters are provided then reads will not
     // be target-filtered.
@@ -763,9 +1043,14 @@ message WriterConfiguration {
         // when the fastq is generated.
         string fastq_header_pattern = 9;
 
-        // How many reads are placed in each file (after batch_count files {batch_number}
-        // is increased in the filename).
-        uint32 batch_count = 10;
+        oneof batch_info {
+            // How many reads are placed in each batch (after batch_count reads {batch_number}
+            // is increased in the pattern).
+            uint32 batch_count = 10;
+
+            // Number of estimated bases within a batch before it rotates to a new batch
+            uint64 bases_per_batch = 15;
+        }
     }
 
     message ReadFastqConfiguration {
@@ -787,8 +1072,14 @@ message WriterConfiguration {
         // when the fastq is generated.
         string header_pattern = 3;
 
-        // How many files are placed in each batch (after batch_count files {batch_number} is increased in the filename).
-        uint32 batch_count = 4;
+        oneof batch_info {
+            // How many reads are placed in each batch (after batch_count reads {batch_number}
+            // is increased in the pattern).
+            uint32 batch_count = 4;
+
+            // Number of estimated bases within a batch before it rotates to a new batch
+            uint64 bases_per_batch = 6;
+        }
 
         // Compress fastq files with gzip compression.
         // default: false
@@ -807,8 +1098,46 @@ message WriterConfiguration {
         // See file pattern attributes above.
         string file_pattern = 2;
 
-        // How many files are placed in each batch (after batch_count files {batch_number} is increased in the filename).
-        uint32 batch_count = 3;
+        oneof batch_info {
+            // How many reads are placed in each batch (after batch_count reads {batch_number}
+            // is increased in the pattern).
+            uint32 batch_count = 3;
+
+            // Number of estimated bases within a batch before it rotates to a new batch
+            uint64 bases_per_batch = 5;
+        }
+
+        // If true minknow will only write the primary alignment for each read.
+        bool disable_writing_multiple_alignments = 4;
+    }
+
+    message ReadPod5Configuration {
+        // Control if a POD5 file should be generated per channel.
+        ChannelConfiguration enable = 1;
+
+        // The pattern used to find a POD5 files name.
+        //
+        // default: pod5{basecall_status}/{flow_cell_id}_{run_id}_{batch_number}.pod5
+        // Where each {xxx} section is replaced with an attribute from the minknow state when the file is written.
+        //
+        // See file pattern attributes above.
+        string file_pattern = 2;
+
+        oneof batch_info {
+            // How many reads are placed in each batch (after batch_count reads {batch_number}
+            // is increased in the pattern).
+            uint32 batch_count = 3;
+
+            // Number of estimated bases within a batch before it rotates to a new batch
+            uint64 bases_per_batch = 7;
+        }
+
+        // Prevent reads which have successfully basecalled being written to pod5.
+        bool disable_writing_passed_reads = 4;
+        // Prevent reads which have failed basecalling being written to pod5.
+        bool disable_writing_failed_reads = 5;
+        // disable writing reads which have been force skipped by the basecaller.
+        bool disable_writing_force_skipped_reads = 6;
     }
 
     message ReadProtobufConfiguration {
@@ -824,8 +1153,14 @@ message WriterConfiguration {
         // See file pattern attributes above.
         string file_pattern = 2;
 
-        // How many files are placed in each batch (after batch_count files {batch_number} is increased in the filename).
-        uint32 batch_count = 3;
+        oneof batch_info {
+            // How many reads are placed in each batch (after batch_count reads {batch_number}
+            // is increased in the pattern).
+            uint32 batch_count = 3;
+
+            // Number of estimated bases within a batch before it rotates to a new batch
+            uint64 bases_per_batch = 4;
+        }
     }
 
     message SequencingSummaryConfiguration {
@@ -900,10 +1235,18 @@ message WriterConfiguration {
         //
         // Stored with the frame commands take effect sequence in /Device/AsicCommands
         bool device_commands = 12;
+        
+        // Dynamic analysis configuration
+        //
+        // Stored with the frame config took effect in /Meta/User/DynamicAnalysisConfiguration
+        bool dynamic_analysis_config = 15;
     }
 
     // Control settings for the report writer
     message ReportConfiguration {
+        // DEPRECATED 6.0: As of 5.1 a pdf report is not generated at all. This field will
+        // be removed in 6.0
+        //
         // The pattern used to find the pdf report filename. If left empty but output is
         // enabled a default pattern is used.
         //
@@ -1022,6 +1365,11 @@ message WriterConfiguration {
     // If not specified, no BAM outputs are generated.
     ReadBamConfiguration read_bam = 8;
 
+    // Configuration for the POD5 writer.
+    //
+    // If not specified no POD5 outputs are generated.
+    ReadPod5Configuration read_pod5 = 10;
+
     // Configuration for the protobuf writer.
     //
     // If not specified, no protobuf outputs are generated.
@@ -1060,3 +1408,25 @@ message GetReadClassificationsRequest {}
 message GetReadClassificationsResponse {
     map<int32, string> read_classifications = 1;
 }
+
+message DynamicAnalysisConfiguration {
+
+    message ReadScaleTracking {
+        // Set the voltage the most recent conductance scan occured at.
+        float conductance_scan_voltage = 1;
+
+        message ChannelConductance {
+            // Per well conductance values.
+            repeated float well_conductance = 1;
+        }
+
+        // Per channel/well conductance values
+        repeated ChannelConductance channel_conductance = 2;
+    }
+
+    // Parameters for read scale tracking:
+    ReadScaleTracking read_scale_tracking = 1;
+}
+
+message GetDynamicAnalysisConfigurationRequest {}
+message SetDynamicAnalysisConfigurationResponse {}

@@ -21,6 +21,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/minknow_api/instance.proto",
                 "proto/minknow_api/log.proto",
                 "proto/minknow_api/keystore.proto",
+                "proto/minknow_api/run_until.proto",
                 "proto/minknow_api/rpc_options.proto",
                 "proto/minknow_api/device.proto",
             ],
