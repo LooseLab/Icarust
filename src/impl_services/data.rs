@@ -54,7 +54,9 @@ use crate::services::minknow_api::data::{
     get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
+use crate::SimulationType;
 use crate::PoreType;
+use crate::AnalyteType;
 use crate::{Config, Sample, _load_toml};
 
 /// unused
@@ -117,6 +119,7 @@ struct SampleInfo {
     file_weights: Vec<WeightedIndex<usize>>,
     /// We use this to determine whether we are reading signal ot Sequence from the file info (R10 -> Sequence)
     pore_type: PoreType,
+    analyte_type: AnalyteType,
 }
 impl fmt::Debug for SampleInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -151,6 +154,7 @@ impl SampleInfo {
         is_barcoded: bool,
         read_len_dist: ReadLengthDist,
         pore_type: PoreType,
+        analyte_type: AnalyteType,
     ) -> SampleInfo {
         SampleInfo {
             name,
@@ -163,6 +167,7 @@ impl SampleInfo {
             is_barcoded,
             file_weights: vec![],
             pore_type,
+            analyte_type,
         }
     }
 }
@@ -668,6 +673,9 @@ fn stop_sending_read(
 pub trait FileExtension {
     fn has_extension<S: AsRef<str>>(&self, extensions: &[S]) -> bool;
     fn is_fasta(&self) -> bool;
+    fn is_npy(&self) -> bool;
+    fn is_pod5(&self) -> bool;
+    
 }
 
 impl<P: AsRef<Path>> FileExtension for P {
@@ -708,6 +716,16 @@ impl<P: AsRef<Path>> FileExtension for P {
             ".fq.gz",
         ]);
     }
+
+    fn is_npy(&self) -> bool {
+        info!("{:#?}", &self.as_ref());
+        return self.as_ref().has_extension(&[".npy"]);
+    }
+
+    fn is_pod5(&self) -> bool {
+        info!("{:#?}", &self.as_ref());
+        return self.as_ref().has_extension(&[".pod5", ".pod5.gz"]);
+    }
 }
 
 /// Read the config file and parse the sample fields. This then returns any necessary Sample infos, setup
@@ -722,8 +740,25 @@ fn process_samples_from_config(
     let sample_weights = read_sample_distribution(config);
     // Seeded rng for generated weighted dists
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(config.get_rand_seed());
-    let kmer_string =
-        read_to_string("static/R10_model.tsv").expect("Failed to read kmers to string");
+
+    // Select simulation type
+    let sim_type = match config.check_analyte_type() {
+        AnalyteType::DNA => r10_sim::SimType::R10,
+        AnalyteType::RNA => r10_sim::SimType::R10RNA,
+    };
+
+    // Select Model to Simulate
+    let model = match (config.check_analyte_type(), config.check_pore_type()) {
+        (AnalyteType::DNA, PoreType::R10) => "static/R10_model.tsv",
+        (AnalyteType::RNA, PoreType::R10) => "static/rna004/9mer_levels_v1_denom.tsv",
+        _ => {
+            // Default case if none of the specified combinations match
+            "static/R10_model.tsv"
+        }
+    };
+
+    let kmer_string = read_to_string(model).expect("Failed to read kmers to string");
+
     let kmers = match config.check_pore_type() {
         PoreType::R10 => {
             let (_, kmer_hashmap) =
@@ -765,6 +800,7 @@ fn process_samples_from_config(
                         config.global_mean_read_length,
                         sample,
                         kmers.as_ref().unwrap(),
+                        sim_type.clone(),
                     );
                 }
             }
@@ -809,21 +845,44 @@ fn process_samples_from_config(
         // only a path to a single file has been passed
         } else {
             debug!("{:#?}", sample);
-            if sample.input_genome.is_fasta() {
-                read_views_of_sequence_data(
-                    &mut views,
-                    &sample.input_genome.clone(),
-                    config.global_mean_read_length,
-                    sample,
-                    kmers.as_ref().unwrap(),
-                );
-            } else {
-                read_views_of_squiggle_data(
-                    &mut views,
-                    &sample.input_genome.clone(),
-                    config.global_mean_read_length,
-                    sample,
-                );
+            match config.check_simulation_type() {
+                SimulationType::Replicative => {
+                    // Continue with replicative
+                    if sample.input_genome.is_pod5() | sample.input_genome.is_pod5() {
+                        read_views_of_squiggle_data(
+                            &mut views,
+                            &sample.input_genome.clone(),
+                            config.global_mean_read_length,
+                            sample,
+                        );
+                    }
+                    else {
+                        debug!("Sorry unsupported format!");
+                    }
+                }
+                SimulationType::Generative => {
+                    // Continue with generative
+                    if sample.input_genome.is_fasta() {
+                        read_views_of_sequence_data(
+                            &mut views,
+                            &sample.input_genome.clone(),
+                            config.global_mean_read_length,
+                            sample,
+                            kmers.as_ref().unwrap(),
+                                    sim_type.clone(),
+                        );
+                            } else if  sample.input_genome.is_npy() {
+                        read_views_of_squiggle_data(
+                            &mut views,
+                            &sample.input_genome.clone(),
+                            config.global_mean_read_length,
+                            sample,
+                        );
+                    }
+                    else {
+                        debug!("Sorry unsupported format!");
+                    }
+                }
             }
             let sample_info = views.get_mut(&sample.name).unwrap();
             match config.check_pore_type() {
@@ -951,6 +1010,7 @@ fn read_views_of_sequence_data(
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
     kmers: &HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
+    sim_type: r10_sim::SimType,
 ) {
     info!(
         "Reading sequence information for {:#?} for sample {:#?} MAY TAKE SOME TIME",
@@ -958,7 +1018,7 @@ fn read_views_of_sequence_data(
         sample_info
     );
     // lazy but cba to pass through
-    let profile = r10_sim::get_sim_profile(r10_sim::SimType::R10);
+    let profile = r10_sim::get_sim_profile(sim_type);
     let num_seq = r10_sim::num_sequences(file_path);
     info!("Simulating for {num_seq} sequences");
     let mut reader: Box<dyn FastxReader> =
@@ -987,6 +1047,7 @@ fn read_views_of_sequence_data(
                 sample_info.is_barcoded(),
                 read_length_dist,
                 PoreType::R10,
+                AnalyteType::DNA,
             ));
         sample.files.push(file_info);
         done += 1;
@@ -1031,6 +1092,7 @@ fn read_views_of_squiggle_data(
             sample_info.is_barcoded(),
             read_length_dist,
             PoreType::R9,
+            AnalyteType::DNA,
         ));
     sample.files.push(file_info)
 }

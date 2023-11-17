@@ -1,0 +1,20 @@
+output_path = "/tmp/"
+target_yield = 100000000000
+working_pore_percent = 85
+pore_type = "R10"
+analyte_type = "RNA"
+
+[parameters]
+sample_name = "test"
+experiment_name = "test_transcript"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "FenceSitter"
+
+[[sample]]
+name = "Human"
+input_genome = "static/gencode.v40.transcripts.small.fa"
+mean_read_length = 1000
+weight = 1
+amplicon = true

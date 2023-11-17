@@ -41,7 +41,7 @@ lazy_static! {
 ///  - some other punctuation is converted to gaps
 ///  - IUPAC bases may be converted to N's depending on the parameter passed in
 ///  - everything else is considered a N
-pub fn normalize(seq: &[u8]) -> Option<Vec<u8>> {
+pub fn normalize(seq: &[u8], is_rna: bool)-> Option<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::with_capacity(seq.len());
     let mut changed: bool = false;
 
@@ -68,7 +68,9 @@ pub fn normalize(seq: &[u8]) -> Option<Vec<u8>> {
     if changed {
         Some(buf)
     } else {
-        None
+        // if return None will cause panic.
+        // Example very short siRNA without even line breaks in genecode transcript.
+        Some(buf)
     }
 }
 
@@ -89,10 +91,14 @@ pub struct R10Settings {
 }
 
 /// Simulation type - Promethion or MInion. We always use Promethion
+#[derive(Clone)]
 pub enum SimType {
     /// R10
     R10,
+    /// R10
+    R10RNA
 }
+
 // const PREFIX: &str =
 //     "TTTTTTTTTTTTTTTTTTAATCAAGCAGCGGAGTTGAGGACGCGAGACGGGACTTTTTTAGCAGACTTTACGGACTACGACT";
 const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
@@ -103,6 +109,10 @@ pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
         SimType::R10 => R10Settings {
             digitisation: 2048.0,
             range: 200.0,
+        },
+        SimType::R10RNA => R10Settings {
+            digitisation: 2048.0,
+            range: 548.0,
         },
     }
 }
@@ -190,7 +200,7 @@ pub fn convert_to_signal<'a>(
     profile: &R10Settings,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * 10);
-    let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
+    let r: Cow<'a, [u8]> = normalize(record.sequence(), false).unwrap().into();
     let num_kmers = r.len() - 8;
     let sty = ProgressStyle::with_template(
         "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",

@@ -63,12 +63,31 @@ use crate::read_length_distribution::ReadLengthDist;
 
 /// Holds the  type of the pore we are simulating
 #[derive(Clone)]
+pub enum SimulationType {
+    /// Replicative (Playback)
+    Replicative,
+    /// Generative
+    Generative,
+}
+
+/// Holds the  type of the pore we are simulating
+#[derive(Clone)]
 pub enum PoreType {
     /// R10 pore
     R10,
     /// R9 pore
     R9,
 }
+
+/// Holds the  type of the pore we are simulating
+#[derive(Clone)]
+pub enum AnalyteType {
+    /// DNA
+    DNA,
+    /// RNA
+    RNA,
+}
+
 #[derive(Deserialize, Debug, Clone)]
 struct Config {
     parameters: Parameters,
@@ -78,13 +97,30 @@ struct Config {
     random_seed: Option<u64>,
     target_yield: f64,
     working_pore_percent: Option<usize>,
+    simulation_type: Option<String>,
     pore_type: Option<String>,
+    analyte_type: Option<String>,
 }
 
 impl Config {
     pub fn get_working_pore_precent(&self) -> usize {
         self.working_pore_percent.unwrap_or(90)
     }
+
+    /// Check that we have a valid simulation type or return the default generative.
+    pub fn check_simulation_type(&self) -> SimulationType {
+        match &self.simulation_type {
+            Some(simulation_type) => match simulation_type.as_str() {
+                "Generative" => SimulationType::Generative,
+                "Playback" => SimulationType::Replicative,
+                _ => {
+                    panic!("Invalid simulation type specified")
+                }
+            },
+            None => SimulationType::Generative,
+        }
+    }
+
 
     /// Check that we have a valid pore type or return the default R10 pore.
     pub fn check_pore_type(&self) -> PoreType {
@@ -97,6 +133,20 @@ impl Config {
                 }
             },
             None => PoreType::R9,
+        }
+    }
+
+    /// Check that we have a valid analyte type or return the default DNA.
+    pub fn check_analyte_type(&self) -> AnalyteType {
+        match &self.analyte_type {
+            Some(analyte_type) => match analyte_type.as_str() {
+                "DNA" => AnalyteType::DNA,
+                "RNA" => AnalyteType::RNA,
+                _ => {
+                    panic!("Invalid analyte_type type specified")
+                }
+            },
+            None => AnalyteType::DNA,
         }
     }
 
