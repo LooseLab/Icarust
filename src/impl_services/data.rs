@@ -1010,7 +1010,7 @@ fn read_views_of_sequence_data(
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
     kmers: &HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
-    sim_type: r10_sim::SimTypesim_type,
+    sim_type: r10_sim::SimType,
 ) {
     info!(
         "Reading sequence information for {:#?} for sample {:#?} MAY TAKE SOME TIME",

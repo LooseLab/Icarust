@@ -14,7 +14,7 @@ position = "FenceSitter"
 
 [[sample]]
 name = "Human"
-input_genome = "static/gencode.v40.transcripts.small.fa"
+input_genome = "docker/squiggle_arrs/gencode.v40.transcripts.pico.fa"
 mean_read_length = 1000
 weight = 1
 amplicon = true
