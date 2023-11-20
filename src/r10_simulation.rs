@@ -41,7 +41,7 @@ lazy_static! {
 ///  - some other punctuation is converted to gaps
 ///  - IUPAC bases may be converted to N's depending on the parameter passed in
 ///  - everything else is considered a N
-pub fn normalize(seq: &[u8], is_rna: bool)-> Option<Vec<u8>> {
+pub fn normalize(seq: &[u8], &is_rna: &bool)-> Option<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::with_capacity(seq.len());
     let mut changed: bool = false;
 
@@ -64,12 +64,15 @@ pub fn normalize(seq: &[u8], is_rna: bool)-> Option<Vec<u8>> {
         if new_char != b' ' {
             buf.push(new_char);
         }
+        if is_rna {
+            buf.reverse()
+        }
     }
     if changed {
         Some(buf)
     } else {
         // if return None will cause panic.
-        // Example very short siRNA without even line breaks in genecode transcript.
+        // Example very short siRNA without line breaks in genecode transcript.
         Some(buf)
     }
 }
@@ -114,6 +117,14 @@ pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
             digitisation: 2048.0,
             range: 548.0,
         },
+    }
+}
+
+/// 
+pub fn get_is_rna(sim_type: SimType) -> bool {
+    match sim_type {
+        SimType::R10 => false,
+        SimType::R10RNA => true
     }
 }
 
@@ -198,9 +209,10 @@ pub fn convert_to_signal<'a>(
     kmers: &FnvHashMap<String, f64>,
     record: &SequenceRecord,
     profile: &R10Settings,
+    is_rna: &bool,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * 10);
-    let r: Cow<'a, [u8]> = normalize(record.sequence(), false).unwrap().into();
+    let r: Cow<'a, [u8]> = normalize(record.sequence(), is_rna).unwrap().into();
     let num_kmers = r.len() - 8;
     let sty = ProgressStyle::with_template(
         "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",

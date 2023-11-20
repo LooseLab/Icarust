@@ -1010,7 +1010,7 @@ fn read_views_of_sequence_data(
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
     kmers: &HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
-    sim_type: r10_sim::SimType,
+    sim_type: r10_sim::SimTypesim_type,
 ) {
     info!(
         "Reading sequence information for {:#?} for sample {:#?} MAY TAKE SOME TIME",
@@ -1018,6 +1018,7 @@ fn read_views_of_sequence_data(
         sample_info
     );
     // lazy but cba to pass through
+    let is_rna = r10_sim::get_is_rna(sim_type.clone());
     let profile = r10_sim::get_sim_profile(sim_type);
     let num_seq = r10_sim::num_sequences(file_path);
     info!("Simulating for {num_seq} sequences");
@@ -1035,7 +1036,7 @@ fn read_views_of_sequence_data(
         let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
         let file_info = FileInfo::new(
             None,
-            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
+            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile, &is_rna).unwrap()),
         );
         let sample = views
             .entry(sample_info.name.clone())
