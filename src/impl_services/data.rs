@@ -43,7 +43,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::cli::Cli;
-use crate::r10_simulation as r10_sim;
+use crate::simulation as r10_sim;
 use crate::reacquisition_distribution::{ReacquisitionPoisson, SampleDist};
 use crate::read_length_distribution::ReadLengthDist;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -743,14 +743,14 @@ fn process_samples_from_config(
 
     // Select simulation type
     let sim_type = match config.check_analyte_type() {
-        AnalyteType::DNA => r10_sim::SimType::R10,
-        AnalyteType::RNA => r10_sim::SimType::R10RNA,
+        AnalyteType::DNA => r10_sim::SimType::DNAR1041,
+        AnalyteType::RNA => r10_sim::SimType::RNAR94,
     };
 
     // Select Model to Simulate
     let model = match (config.check_analyte_type(), config.check_pore_type()) {
         (AnalyteType::DNA, PoreType::R10) => "static/R10_model.tsv",
-        (AnalyteType::RNA, PoreType::R10) => "static/rna004/9mer_levels_v1_denom.tsv",
+        (AnalyteType::RNA, PoreType::R10) => "static/rna_r9.4_180mv_70bps/5mer_levels_v1.txt",
         _ => {
             // Default case if none of the specified combinations match
             "static/R10_model.tsv"
@@ -869,7 +869,7 @@ fn process_samples_from_config(
                             config.global_mean_read_length,
                             sample,
                             kmers.as_ref().unwrap(),
-                                    sim_type.clone(),
+                            sim_type.clone(),
                         );
                             } else if  sample.input_genome.is_npy() {
                         read_views_of_squiggle_data(
@@ -1009,7 +1009,7 @@ fn read_views_of_sequence_data(
     file_path: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
-    kmers: &HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
+    kmers: &HashMap<String, Vec<f64>, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
     sim_type: r10_sim::SimType,
 ) {
     info!(
@@ -1018,7 +1018,6 @@ fn read_views_of_sequence_data(
         sample_info
     );
     // lazy but cba to pass through
-    let is_rna = r10_sim::get_is_rna(sim_type.clone());
     let profile = r10_sim::get_sim_profile(sim_type);
     let num_seq = r10_sim::num_sequences(file_path);
     info!("Simulating for {num_seq} sequences");
@@ -1036,7 +1035,7 @@ fn read_views_of_sequence_data(
         let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
         let file_info = FileInfo::new(
             None,
-            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile, &is_rna).unwrap()),
+            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
         );
         let sample = views
             .entry(sample_info.name.clone())

@@ -8,12 +8,15 @@ use ndarray_npy::ViewNpyExt;
 use needletail::parse_fastx_file;
 use needletail::parser::SequenceRecord;
 use needletail::{FastxReader, Sequence};
-use nom::character::complete::{alpha1, multispace0, tab};
+use nom::character::complete::{alpha1, char, digit1, line_ending, multispace0, multispace1, tab};
+use nom::combinator::{map, map_res, recognize};
 use nom::multi::many1;
 use nom::number::complete::double;
-use nom::sequence::{separated_pair, terminated};
+use nom::sequence::{preceded, separated_pair, terminated, tuple};
 use nom::IResult;
 use rand::seq::SliceRandom;
+use rand::Rng;
+use rand_distr::Normal;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
@@ -41,7 +44,7 @@ lazy_static! {
 ///  - some other punctuation is converted to gaps
 ///  - IUPAC bases may be converted to N's depending on the parameter passed in
 ///  - everything else is considered a N
-pub fn normalize(seq: &[u8], &is_rna: &bool)-> Option<Vec<u8>> {
+pub fn normalize(seq: &[u8], direction: bool) -> Option<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::with_capacity(seq.len());
     let mut changed: bool = false;
 
@@ -64,7 +67,7 @@ pub fn normalize(seq: &[u8], &is_rna: &bool)-> Option<Vec<u8>> {
         if new_char != b' ' {
             buf.push(new_char);
         }
-        if is_rna {
+        if direction {
             buf.reverse()
         }
     }
@@ -83,6 +86,8 @@ pub struct Kmer {
     pub sequence: String,
     /// The value for the signal of that 9mer
     pub value: f64,
+    /// std_level
+    pub std_level: f64
 }
 
 /// Profile for sequencing
@@ -91,15 +96,23 @@ pub struct R10Settings {
     digitisation: f64,
     /// range
     range: f64,
+    /// sampling
+    sampling: i16,
+    /// kmer
+    kmer_len: i16,
+    /// noise
+    noise: bool,
+    /// 3to5
+    direction: bool
 }
 
 /// Simulation type - Promethion or MInion. We always use Promethion
 #[derive(Clone)]
 pub enum SimType {
     /// R10
-    R10,
+    DNAR1041,
     /// R10
-    R10RNA
+    RNAR94,
 }
 
 // const PREFIX: &str =
@@ -109,46 +122,65 @@ const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
 /// return the simulation profile for a given simulation type
 pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
     match sim_type {
-        SimType::R10 => R10Settings {
+        SimType::DNAR1041 => R10Settings {
             digitisation: 2048.0,
             range: 200.0,
+            sampling: 10,
+            kmer_len: 9,
+            noise: false,
+            direction: false
         },
-        SimType::R10RNA => R10Settings {
+        SimType::RNAR94 => R10Settings {
             digitisation: 2048.0,
             range: 548.0,
+            sampling: 43,
+            kmer_len: 5,
+            noise: true,
+            direction: true
         },
     }
 }
 
-/// 
+///
 pub fn get_is_rna(sim_type: SimType) -> bool {
     match sim_type {
-        SimType::R10 => false,
-        SimType::R10RNA => true
+        SimType::DNAR1041 => false,
+        SimType::RNAR94 => true,
     }
 }
 
 /// Use nom to parse an individual line in the kmers file
-pub fn parse_kmer_record(input: &str) -> IResult<&str, Kmer> {
-    let (remaining, (kmer, value)) =
-        separated_pair(alpha1, tab, terminated(double, multispace0))(input)?;
+fn parse_kmer_record(input: &str) -> IResult<&str, Kmer> {
+    let (remaining, (kmer, _, value, _, std_level)) =
+    terminated(
+        tuple((
+            alpha1,
+            tab,
+            double,
+            tab,
+            double,
+        )),
+        multispace0
+    )(input)?;
+
     let kmer = kmer.to_string();
     Ok((
         remaining,
         Kmer {
             sequence: kmer,
             value,
+            std_level
         },
     ))
 }
 
 /// Parse kmers and corresponding values from the file
-pub fn parse_kmers(input: &str) -> IResult<&str, FnvHashMap<String, f64>> {
+pub fn parse_kmers(input: &str) -> IResult<&str, FnvHashMap<String, Vec<f64>>> {
     let (remainder, kmer_vec) = many1(parse_kmer_record)(input)?;
-    let mut kmers: HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>> =
+    let mut kmers: HashMap<String, Vec<f64>, std::hash::BuildHasherDefault<fnv::FnvHasher>> =
         FnvHashMap::default();
     for x in kmer_vec {
-        kmers.insert(x.sequence, x.value);
+        kmers.insert(x.sequence, vec![x.value, x.value]);
     }
     Ok((remainder, kmers))
 }
@@ -206,37 +238,59 @@ pub fn sequence_lengths<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Vec<usize>
 
 /// Convert a given FASTA sequence to signal, digitising it and return a Vector of I16
 pub fn convert_to_signal<'a>(
-    kmers: &FnvHashMap<String, f64>,
+    kmers: &FnvHashMap<String, Vec<f64>>,
     record: &SequenceRecord,
-    profile: &R10Settings,
-    is_rna: &bool,
+    profile: &R10Settings
 ) -> Result<Vec<i16>, Box<dyn Error>> {
-    let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * 10);
-    let r: Cow<'a, [u8]> = normalize(record.sequence(), is_rna).unwrap().into();
-    let num_kmers = r.len() - 8;
+    let sampling = profile.sampling;
+    let kmer_len = profile.kmer_len;
+    let direction = profile.direction;
+    let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * sampling as usize);
+    warn!("{:?}", record.num_bases() * sampling as usize);
+    let r: Cow<'a, [u8]> = normalize(record.sequence(), direction).unwrap().into();
+    let num_kmers: usize = r.len() - (kmer_len as usize - 1);
+    warn!("{:?}", r.len());
+    warn!("{:?}", kmer_len as usize - 1);
     let sty = ProgressStyle::with_template(
         "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
     )
     .unwrap()
     .progress_chars("##-");
-    let pb = ProgressBar::new(num_kmers.try_into().unwrap());
+    let pb: ProgressBar = ProgressBar::new(num_kmers.try_into().unwrap());
     pb.set_style(sty);
-    for kmer in r.kmers(9) {
+    for kmer in r.kmers(kmer_len as u8) {
+        // warn!("{:?}", kmer);
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
         kmer = replace_char_with_base(&kmer, None);
-        debug!("{kmer}");
+        // debug!("{kmer}");
         let value = kmers.get(&kmer.to_uppercase()).unwrap_or_else(|| {
             panic!(
                 "failed to retrieve value for kmer {kmer}, on contig{}",
                 String::from_utf8(record.id().to_vec()).unwrap()
             )
         });
-        debug!("{value}");
 
-        let x = (value * profile.digitisation) / profile.range;
-        // 10 sample for each base (sample_rate (4000) / base per second (400))
-        // could also be worked out from profile.dwell_mean
-        for _ in 0..10 {
+        let mut x = 0.0;
+
+        if profile.noise {
+            // Generate a random number using the normal distribution
+            let mut rng = rand::thread_rng();
+            let gauss: f64 = rng.sample(Normal::new(0.0, 1.0).unwrap());
+
+            // Apply noise to the value;
+            let value_with_noise = (gauss * value[1] * 1.0) + value[0];
+
+            // Calculate the final value based on the profile
+            x = (value_with_noise * profile.digitisation) / profile.range;
+        } else {
+            // Calculate the value without noise based on the profile
+            x = (value[0] * profile.digitisation) / profile.range;
+        }
+
+        // N sampling for each base (sample_rate / bases per second )
+        // This could also be worked out from profile.dwell_mean
+        // Iterate and push samples into the signal_vec
+        for _ in 0..sampling {
             signal_vec.push(x as i16);
         }
         pb.inc(1);

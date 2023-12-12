@@ -14,7 +14,7 @@
 /// The module pertaining the CLI code
 pub mod cli;
 mod impl_services;
-pub mod r10_simulation;
+pub mod simulation;
 mod reacquisition_distribution;
 pub mod utils;
 #[macro_use]
