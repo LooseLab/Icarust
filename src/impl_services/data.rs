@@ -750,7 +750,7 @@ fn process_samples_from_config(
     let model = match config.check_model_type() {
         Model::DNAR10 => "static/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt",
         Model::RNAR9 => "static/rna_r9.4_180mv_70bps/5mer_levels_v1.txt",
-        _ => "static/R10_model.tsv"
+        _ => "static/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt"
     };
 
     let kmer_string = read_to_string(model).expect("Failed to read kmers to string");

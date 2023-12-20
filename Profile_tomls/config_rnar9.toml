@@ -1,4 +1,4 @@
-output_path = "/data/satrio/tmp/"
+output_path = "/tmp/"
 target_yield = 100000000000
 working_pore_percent = 85
 model_type = "RNAR9"
@@ -14,8 +14,8 @@ sampling = 3000
 
 [[sample]]
 name = "Human"
-input_genome = "/data/satrio/test-icarust-as/gencode.v44.transcripts.simple.wtc11.sort.fa"
+input_genome = "docker/squiggle_arrs/gencode.v44.transcripts.wtc11.fa"
 mean_read_length = 1300
 weight = 1
-weights_files = ["/data/satrio/test-icarust-as/dist.json"]
+weights_files = ["docker/squiggle_arrs/gencode.v44.transcripts.wtc11.dist.json"]
 amplicon = true
