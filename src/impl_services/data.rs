@@ -444,7 +444,7 @@ fn start_write_out_thread(
             let z = { *write_out_gracefully.lock().unwrap() };
 
             // this isn't perfect. if we are finsihing up a run and have more than 4000 reads waiting to be written out, we will lose the excess reads over 4000
-            if read_infos.len() >= 10 || z {
+            if read_infos.len() >= 4000 || z {
                 let extension = if x.pod5 { ".pod5" } else { ".fast5" };
                 let output_file_name = format!(
                     "{}/{}_pass_{}_{}{}",
