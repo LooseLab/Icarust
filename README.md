@@ -31,15 +31,19 @@ sudo apt install -y protobuf-compiler libprotobuf-dev
 Minknow core 5.x requires a secure channel connection be made by the minknow API. IN order to do this, any programs connecting to Icarusts facsimile of the MinKNOW RPC will need to set the following environment variables:
 ```python
 from minknow_api.manager import Manager
-import os
-os.environ["MINKNOW_API_CLIENT_CERTIFICATE_CHAIN"] = "/Path/to/Icarust/static/tls_certs/ca.crt"
-os.environ["MINKNOW_API_CLIENT_KEY"] = "/Path/to/Icarust/static/tls_certs/ca.key"              
+import os         
 os.environ["MINKNOW_TRUSTED_CA"] = "/Path/to/Icarust/static/tls_certs/ca.crt"                  
 from minknow_api.manager import Manager                                                      
 m = Manager( port=9502)                                                                      
 pos = next(m.flow_cell_positions())                                                          
 con = pos.connect()                                                                          
 con.instance.get_version_info()    
+```
+
+Alternatively this can be exported on the command line.
+
+```bash
+export MINKNOW_TRUSTED_CA="/Path/to/icarust/static/tls_certs/ca.crt"
 ```
 
 
