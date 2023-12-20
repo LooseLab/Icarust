@@ -1,0 +1,23 @@
+output_path = "/data/satrio/tmp/"
+target_yield = 100000000000
+working_pore_percent = 10
+pore_type = "R10"
+analyte_type = "RNA"
+
+[parameters]
+sample_name = "wtc11"
+experiment_name = "wtc11_transcript"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Mechamaru"
+position = "FenceSitter"
+break_read_ms = 1000
+sampling = 3000
+
+[[sample]]
+name = "Human"
+input_genome = "/data/satrio/test-icarust-as/gencode.v44.transcripts.simple.wtc11.sort.fa"
+mean_read_length = 1300
+weight = 1
+weights_files = ["/data/satrio/test-icarust-as/dist.json"]
+amplicon = true

@@ -88,7 +88,7 @@ pub struct Kmer {
 }
 
 /// Profile for sequencing
-pub struct R10Settings {
+pub struct SimSettings {
     /// Digitisation to i16 I dunno
     digitisation: f64,
     /// range
@@ -117,9 +117,9 @@ pub enum SimType {
 const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
 
 /// return the simulation profile for a given simulation type
-pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
+pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
     match sim_type {
-        SimType::DNAR1041 => R10Settings {
+        SimType::DNAR1041 => SimSettings {
             digitisation: 2048.0,
             range: 200.0,
             sampling: 10,
@@ -127,7 +127,7 @@ pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
             noise: false,
             direction: false
         },
-        SimType::RNAR94 => R10Settings {
+        SimType::RNAR94 => SimSettings {
             digitisation: 2048.0,
             range: 200.0,
             sampling: 43,
@@ -237,7 +237,7 @@ pub fn sequence_lengths<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Vec<usize>
 pub fn convert_to_signal<'a>(
     kmers: &FnvHashMap<String, Vec<f64>>,
     record: &SequenceRecord,
-    profile: &R10Settings
+    profile: &SimSettings
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let sampling = profile.sampling;
     let kmer_len = profile.kmer_len;

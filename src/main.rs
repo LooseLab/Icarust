@@ -63,15 +63,6 @@ use crate::read_length_distribution::ReadLengthDist;
 
 /// Holds the  type of the pore we are simulating
 #[derive(Clone)]
-pub enum SimulationType {
-    /// Replicative (Playback)
-    Replicative,
-    /// Generative
-    Generative,
-}
-
-/// Holds the  type of the pore we are simulating
-#[derive(Clone)]
 pub enum PoreType {
     /// R10 pore
     R10,
@@ -106,21 +97,6 @@ impl Config {
     pub fn get_working_pore_precent(&self) -> usize {
         self.working_pore_percent.unwrap_or(90)
     }
-
-    /// Check that we have a valid simulation type or return the default generative.
-    pub fn check_simulation_type(&self) -> SimulationType {
-        match &self.simulation_type {
-            Some(simulation_type) => match simulation_type.as_str() {
-                "Generative" => SimulationType::Generative,
-                "Playback" => SimulationType::Replicative,
-                _ => {
-                    panic!("Invalid simulation type specified")
-                }
-            },
-            None => SimulationType::Generative,
-        }
-    }
-
 
     /// Check that we have a valid pore type or return the default R10 pore.
     pub fn check_pore_type(&self) -> PoreType {
@@ -229,11 +205,18 @@ struct Parameters {
     device_id: String,
     position: String,
     break_read_ms: Option<u64>,
+    sampling: Option<u64>
 }
 
 impl Parameters {
     pub fn get_chunk_size_ms(&self) -> u64 {
         self.break_read_ms.unwrap_or(400)
+    }
+}
+
+impl Parameters {
+    pub fn get_sampling(&self) -> u64 {
+        self.sampling.unwrap_or(4000)
     }
 }
 
@@ -251,10 +234,11 @@ struct Sample {
 }
 
 impl Sample {
-    pub fn get_read_len_dist(&self, global_read_len: Option<f64>) -> ReadLengthDist {
+    pub fn get_read_len_dist(&self, global_read_len: Option<f64>, sampling: u64) -> ReadLengthDist {
+
         match self.mean_read_length {
-            Some(mrl) => ReadLengthDist::new(mrl / 450.0 * 4000.0),
-            None => ReadLengthDist::new(global_read_len.unwrap() / 450.0 * 4000.0),
+            Some(mrl) => ReadLengthDist::new(mrl / 400.0 * sampling as f64),
+            None => ReadLengthDist::new(global_read_len.unwrap() / 400.0 * sampling as f64),
         }
     }
     pub fn is_amplicon(&self) -> bool {

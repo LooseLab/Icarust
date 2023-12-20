@@ -43,7 +43,7 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::cli::Cli;
-use crate::simulation as r10_sim;
+use crate::simulation as simulation;
 use crate::reacquisition_distribution::{ReacquisitionPoisson, SampleDist};
 use crate::read_length_distribution::ReadLengthDist;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -54,7 +54,6 @@ use crate::services::minknow_api::data::{
     get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
-use crate::SimulationType;
 use crate::PoreType;
 use crate::AnalyteType;
 use crate::{Config, Sample, _load_toml};
@@ -191,6 +190,7 @@ pub struct DataServiceServicer {
     setup: Arc<Mutex<RunSetup>>,
     break_chunks_ms: u64,
     channel_size: usize,
+    sampling: u64
 }
 
 #[derive(Debug, Deserialize)]
@@ -429,10 +429,11 @@ fn start_write_out_thread(
                         let unblock_time = to_write_info.time_unblocked;
                         let prev_time = to_write_info.start_time_utc;
                         let elapsed_time = unblock_time.time() - prev_time.time();
-                        let stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
+                        let stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), config.parameters.get_sampling());
                         new_end = min(stop, to_write_info.read.len());
                     }
                     let signal = to_write_info.read[0..new_end].to_vec();
+                    // let signal = to_write_info.read.to_vec();
                     debug!("{to_write_info:#?}");
                     if signal.is_empty() {
                         error!("Attempt to write empty signal");
@@ -460,10 +461,10 @@ fn start_write_out_thread(
                         ),
                     ]);
                     let channel_info = ChannelInfo::new(
-                        8192_f64,
-                        6.0,
-                        1500.0,
-                        4000.0,
+                        2048_f64,
+                        0.0,
+                        200.0,
+                        config.parameters.get_sampling() as f64,
                         to_write_info.channel_number.clone(),
                     );
                     multi
@@ -743,8 +744,8 @@ fn process_samples_from_config(
 
     // Select simulation type
     let sim_type = match config.check_analyte_type() {
-        AnalyteType::DNA => r10_sim::SimType::DNAR1041,
-        AnalyteType::RNA => r10_sim::SimType::RNAR94,
+        AnalyteType::DNA => simulation::SimType::DNAR1041,
+        AnalyteType::RNA => simulation::SimType::RNAR94,
     };
 
     // Select Model to Simulate
@@ -762,7 +763,7 @@ fn process_samples_from_config(
     let kmers = match config.check_pore_type() {
         PoreType::R10 => {
             let (_, kmer_hashmap) =
-                r10_sim::parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
+                simulation::parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
             Some(kmer_hashmap)
         }
         PoreType::R9 => None,
@@ -791,6 +792,7 @@ fn process_samples_from_config(
                         &entry.path().clone(),
                         config.global_mean_read_length,
                         sample,
+                        config.parameters.get_sampling()
                     );
                 } else if entry.path().is_fasta() {
                     info!("Reading view of sequence for {:#?}", entry.path());
@@ -801,6 +803,7 @@ fn process_samples_from_config(
                         sample,
                         kmers.as_ref().unwrap(),
                         sim_type.clone(),
+                        config.parameters.get_sampling()
                     );
                 }
             }
@@ -812,7 +815,7 @@ fn process_samples_from_config(
                 // generate amplicon distributions for each barcode
                 None => {
                     let num_contigs = match config.check_pore_type() {
-                        PoreType::R10 => r10_sim::num_sequences(sample.input_genome.clone()),
+                        PoreType::R10 => simulation::num_sequences(sample.input_genome.clone()),
                         PoreType::R9 => sample_info.files.len(),
                     };
                     let mut file_distributions = vec![];
@@ -845,45 +848,38 @@ fn process_samples_from_config(
         // only a path to a single file has been passed
         } else {
             debug!("{:#?}", sample);
-            match config.check_simulation_type() {
-                SimulationType::Replicative => {
-                    // Continue with replicative
-                    if sample.input_genome.is_pod5() | sample.input_genome.is_pod5() {
-                        read_views_of_squiggle_data(
-                            &mut views,
-                            &sample.input_genome.clone(),
-                            config.global_mean_read_length,
-                            sample,
-                        );
-                    }
-                    else {
-                        debug!("Sorry unsupported format!");
-                    }
-                }
-                SimulationType::Generative => {
-                    // Continue with generative
-                    if sample.input_genome.is_fasta() {
-                        read_views_of_sequence_data(
-                            &mut views,
-                            &sample.input_genome.clone(),
-                            config.global_mean_read_length,
-                            sample,
-                            kmers.as_ref().unwrap(),
-                            sim_type.clone(),
-                        );
-                            } else if  sample.input_genome.is_npy() {
-                        read_views_of_squiggle_data(
-                            &mut views,
-                            &sample.input_genome.clone(),
-                            config.global_mean_read_length,
-                            sample,
-                        );
-                    }
-                    else {
-                        debug!("Sorry unsupported format!");
-                    }
-                }
+            if sample.input_genome.is_pod5() | sample.input_genome.is_pod5() {
+                read_views_of_squiggle_data(
+                    &mut views,
+                    &sample.input_genome.clone(),
+                    config.global_mean_read_length,
+                    sample,
+                    config.parameters.get_sampling()
+                );
             }
+            if sample.input_genome.is_fasta() {
+                read_views_of_sequence_data(
+                    &mut views,
+                    &sample.input_genome.clone(),
+                    config.global_mean_read_length,
+                    sample,
+                    kmers.as_ref().unwrap(),
+                    sim_type.clone(),
+                    config.parameters.get_sampling()
+                );
+            } else if  sample.input_genome.is_npy() {
+                read_views_of_squiggle_data(
+                    &mut views,
+                    &sample.input_genome.clone(),
+                    config.global_mean_read_length,
+                    sample,
+                    config.parameters.get_sampling()
+                );
+            }
+            else {
+                debug!("Sorry unsupported format!");
+            }
+            
             let sample_info = views.get_mut(&sample.name).unwrap();
             match config.check_pore_type() {
                 PoreType::R9 => {
@@ -896,9 +892,9 @@ fn process_samples_from_config(
                         Some(_) => read_sample_distribution_files(sample),
                         // generate amplicon distributions for each barcode
                         None => {
-                            let num_contigs = r10_sim::num_sequences(sample.input_genome.clone());
+                            let num_contigs = simulation::num_sequences(sample.input_genome.clone());
                             let read_lengths =
-                                r10_sim::sequence_lengths(sample.input_genome.clone());
+                                simulation::sequence_lengths(sample.input_genome.clone());
                             let mut file_distributions = vec![];
                             // If we have barcodes
                             if let Some(barcodes) = &sample.barcodes {
@@ -921,6 +917,7 @@ fn process_samples_from_config(
                             file_distributions
                         }
                     };
+                    warn!("{:?}", &distributions);
                     sample_info.file_weights = distributions;
                 }
             }
@@ -1010,7 +1007,8 @@ fn read_views_of_sequence_data(
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
     kmers: &HashMap<String, Vec<f64>, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
-    sim_type: r10_sim::SimType,
+    sim_type: simulation::SimType,
+    sampling: u64,
 ) {
     info!(
         "Reading sequence information for {:#?} for sample {:#?} MAY TAKE SOME TIME",
@@ -1018,8 +1016,8 @@ fn read_views_of_sequence_data(
         sample_info
     );
     // lazy but cba to pass through
-    let profile = r10_sim::get_sim_profile(sim_type);
-    let num_seq = r10_sim::num_sequences(file_path);
+    let profile = simulation::get_sim_profile(sim_type);
+    let num_seq = simulation::num_sequences(file_path);
     info!("Simulating for {num_seq} sequences");
     let mut reader: Box<dyn FastxReader> =
         parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
@@ -1032,10 +1030,10 @@ fn read_views_of_sequence_data(
             "Converting {}",
             String::from_utf8(fasta_record.id().to_vec()).unwrap()
         );
-        let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
+        let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length, sampling);
         let file_info = FileInfo::new(
             None,
-            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
+            Some(simulation::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
         );
         let sample = views
             .entry(sample_info.name.clone())
@@ -1069,6 +1067,7 @@ fn read_views_of_squiggle_data(
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
+    sampling: u64,
 ) {
     info!(
         "Reading squiggle information for {:#?} for sample {:#?}",
@@ -1080,7 +1079,7 @@ fn read_views_of_squiggle_data(
     let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
         ArrayView1::<i16>::view_npy(&mmap).unwrap();
     let size = view.shape()[0];
-    let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
+    let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length, sampling);
     let file_info = FileInfo::new(Some(view.to_owned()), None);
     let sample = views
         .entry(sample_info.name.clone())
@@ -1099,8 +1098,8 @@ fn read_views_of_squiggle_data(
 
 /// Convert an elapased period of time in milliseconds tinto samples
 
-fn convert_milliseconds_to_samples(milliseconds: i64) -> usize {
-    (milliseconds * 4) as usize
+fn convert_milliseconds_to_samples(milliseconds: i64, sampling: u64) -> usize {
+    (milliseconds as f64 * (sampling/1000) as f64 ) as usize
 }
 
 ///
@@ -1166,6 +1165,7 @@ fn generate_read(
     read_number: &mut u32,
     start_time: &u64,
     barcode_squig: &HashMap<String, (Vec<i16>, Vec<i16>)>,
+    sampling: u64
 ) {
     // set stop receieivng to false so we don't accidentally not send the read
     value.stop_receiving = false;
@@ -1175,11 +1175,13 @@ fn generate_read(
     value.end_reason = 1;
     // we want to write this out at the end
     value.write_out = true;
-    // read start time in samples (seconds since start of experiment * 4000)
-    value.start_time = (Utc::now().timestamp() as u64 - start_time) * 4000_u64;
+    // read start time in samples (seconds since start of experiment * sampling)
+    value.start_time = (Utc::now().timestamp() as u64 - start_time) * sampling;
     value.start_time_seconds = (Utc::now().timestamp() as u64 - start_time) as usize;
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
+    // warn!{"{:?}", "here"};
+    // warn!{"{:?}", dist};
     let sample_choice: &String = &samples[dist.sample(rng)];
     value.read_sample_name = sample_choice.clone();
     let sample_info: &SampleInfo = &views[sample_choice];
@@ -1211,6 +1213,9 @@ fn generate_read(
                 .sample(rng),
         )
         .unwrap();
+    
+    // warn!("{:?}", sample_info.files);
+    // warn!("{:?}", sample_info.file_weights.get(file_weight_choice).unwrap().sample(rng));
     // earliest possible start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {
         true => 0,
@@ -1220,7 +1225,9 @@ fn generate_read(
     let read_distribution = &sample_info.read_len_dist;
     let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
-    let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
+    // let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
+    let end = file_info.contig_len - 1;
+    // warn!{"{:?}", file_info.contig_len}
     let (mut barcode_1_squig, mut barcode_2_squig) = (vec![], vec![]);
     // Barcode name has been provided for this sample
     if sample_info.is_barcoded {
@@ -1243,7 +1250,7 @@ fn generate_read(
         }
         PoreType::R10 => {
             // generate a prefix
-            let mut prefix = r10_sim::generate_prefix().expect("NO PREFIX BAD");
+            let mut prefix = simulation::generate_prefix().expect("NO PREFIX BAD");
             //  read the signal here
             let mut read_squig = file_info
                 .sequence
@@ -1257,15 +1264,17 @@ fn generate_read(
                 barcode_1_squig.extend(read_squig);
                 read_squig = barcode_1_squig;
             }
-            prefix.extend(read_squig);
-            prefix
+            // prefix.extend(read_squig);
+            // warn!{"{:?}", prefix.len()}
+            // prefix
+            read_squig
         }
     };
 
     // slice the view to get our full read
     value.read.append(&mut squiggle);
     // set estimated duration in seconds
-    value.duration = value.read.len() / 4000;
+    value.duration = value.read.len() / sampling as usize;
     // set the read len for channel death chance
     value.last_read_len = value.read.len() as u64;
     let read_id = Uuid::new_v4().to_string();
@@ -1289,6 +1298,7 @@ impl DataServiceServicer {
 
         let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
+        let sampling: u64 = config.parameters.get_sampling();
         let start_time: u64 = Utc::now().timestamp() as u64;
         let barcode_squig = create_barcode_squig_hashmap(&config);
         info!("Barcodes available {:#?}", barcode_squig.keys());
@@ -1412,6 +1422,7 @@ impl DataServiceServicer {
                                 &mut read_number,
                                 &start_time,
                                 &barcode_squig,
+                                sampling
                             )
                         }
                     }
@@ -1442,6 +1453,7 @@ impl DataServiceServicer {
             setup: is_safe_setup,
             break_chunks_ms,
             channel_size,
+            sampling,
         }
     }
 }
@@ -1465,7 +1477,8 @@ impl DataService for DataServiceServicer {
         let channel_size = self.channel_size;
         let mut stream_counter = 1;
         let break_chunk_ms = self.break_chunks_ms;
-        let chunk_size = break_chunk_ms as f64 / 1000.0 * 4000.0;
+        let sampling = self.sampling;
+        let chunk_size = break_chunk_ms as f64 / 1000.0 * sampling as f64;
 
         // Stream the responses back
         let output = async_stream::try_stream! {
@@ -1521,14 +1534,21 @@ impl DataService for DataServiceServicer {
                                 let read_start_time = read_info.start_time_utc;
                                 let elapsed_time = now_time.time() - read_start_time.time();
                                 // How far through the read we are in total samples
-                                let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
+                                let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
                                 // slice of signal is too short
                                 if start > stop || (stop - start) < chunk_size as usize {
+                                    warn!("{:?}", "a");
+                                    warn!("{:?} start is:", start);
+                                    warn!("{:?} stop is:", stop);
+                                    warn!("{:?} chunk_size is:", chunk_size);
+                                    // warn!("{:?}", start > stop || (stop - start) < chunk_size);
                                     continue
                                 }
 
                                 // Read through pore is too long ( roughly longer than 4.5kb worth of bases through pore
                                 if stop > max_read_len_samples {
+                                    warn!("{:?}", "b");
+                                    warn!("{:?}", stop > max_read_len_samples);
                                     continue
                                 }
 
@@ -1547,6 +1567,8 @@ impl DataService for DataServiceServicer {
                                 }
                                 // CHeck start is not past end
                                 if start > read_info.read.len() {
+                                    warn!("{:?}", "c");
+                                    warn!("{:?}", start > read_info.read.len());
                                     continue
                                 }
 
@@ -1558,6 +1580,8 @@ impl DataService for DataServiceServicer {
                                 let read_chunk = read_info.read[start..stop].to_vec();
                                 // Chunk is too short
                                 if read_chunk.len() < 300 {
+                                    warn!("{:?}", "d");
+                                    warn!("{:?}", read_chunk.len() < 300);
                                     continue
                                 }
                                 container.push((read_info.channel, ReadData{
