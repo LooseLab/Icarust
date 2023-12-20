@@ -269,10 +269,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .get("TLS", "cert-dir")
             .expect("Tls cert dir not found in config.ini"),
     ); // Setup the TLS certifcates using the Minknow TLS certs
-    let cert = tokio::fs::read(format!("{}", tls_cert_path.join("localhost.crt").display()))
+    let cert = tokio::fs::read(format!("{}", tls_cert_path.join("server.crt").display()))
         .await
         .expect("No TLS certs found");
-    let key = tokio::fs::read(format!("{}", tls_cert_path.join("localhost.key").display())).await?;
+    let key = tokio::fs::read(format!("{}", tls_cert_path.join("server.key").display())).await?;
     let server_identity = Identity::from_pem(cert, key);
     let tls = ServerTlsConfig::new().identity(server_identity);
     let tls_position = tls.clone();

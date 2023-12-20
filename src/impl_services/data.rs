@@ -14,10 +14,13 @@
 //!
 use futures::{Stream, StreamExt};
 use needletail::{parse_fastx_file, FastxReader};
+use podders::reads::{EndReason, PoreType as PodPoreType, ReadInfo as PodReadInfo};
+use podders::run_info::RunInfoData;
+use podders::Pod5File;
 use std::cmp::{self, min};
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::{create_dir_all, read, read_to_string, DirEntry, File};
+use std::fs::{create_dir_all, read_to_string, DirEntry, File};
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -318,6 +321,12 @@ fn get_barcode_squiggle(
     Ok((barcode_arr_1, barcode_arr_2))
 }
 
+/// We want to be relatively generic about our output until we are literally writing data
+enum OutputFileType {
+    Pod5(Pod5File),
+    Fast5(MultiFast5File),
+}
+
 /// Start the thread that will handle writing out the FAST5 file,
 fn start_write_out_thread(
     run_id: String,
@@ -333,6 +342,7 @@ fn start_write_out_thread(
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
         let config = _load_toml(&x.simulation_profile);
+        let ic_pt = config.check_pore_type();
         let experiment_duration = config.get_experiment_duration_set().to_string();
         // std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
         let context_tags = HashMap::from([
@@ -398,6 +408,38 @@ fn start_write_out_thread(
         }
         // loop to collect reads and write out files
         loop {
+            let run_info = if x.pod5 {
+                Some(RunInfoData {
+                    acquisition_id: run_id.clone(),
+                    acquisition_start_time: 1625097600000,
+                    adc_max: 32767,
+                    adc_min: -32768,
+                    context_tags: context_tags
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                    experiment_name: "Experiment 1".to_string(),
+                    flow_cell_id: config.parameters.flowcell_name.to_string(),
+                    flow_cell_product_code: "PC123".to_string(),
+                    protocol_name: "Protocol 1".to_string(),
+                    protocol_run_id: "PRID123".to_string(),
+                    protocol_start_time: 1625097600000,
+                    sample_id: config.parameters.sample_name.to_string(),
+                    sample_rate: 4000,
+                    sequencing_kit: "Kit X".to_string(),
+                    sequencer_position: "bamboo".to_string(),
+                    sequencer_position_type: "Gigachad".to_string(),
+                    software: "Icarust v1.0".to_string(),
+                    system_name: "Of a down".to_string(),
+                    system_type: "System Type A".to_string(),
+                    tracking_id: tracking_id
+                        .iter()
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect(),
+                })
+            } else {
+                None
+            };
             for finished_read_info in complete_read_rx.try_iter() {
                 read_infos.push(finished_read_info);
             }
@@ -405,16 +447,28 @@ fn start_write_out_thread(
 
             // this isn't perfect. if we are finsihing up a run and have more than 4000 reads waiting to be written out, we will lose the excess reads over 4000
             if read_infos.len() >= 4000 || z {
-                let fast5_file_name = format!(
-                    "{}/{}_pass_{}_{}.fast5",
+                let extension = if x.pod5 { ".pod5" } else { ".fast5" };
+                let output_file_name = format!(
+                    "{}/{}_pass_{}_{}{}",
                     &output_dir.display(),
                     config.parameters.flowcell_name,
                     &run_id[0..6],
-                    file_counter
+                    file_counter,
+                    extension
                 );
                 // drain 4000 reads and write them into a FAST5 file
-                let mut multi = MultiFast5File::new(fast5_file_name.clone(), OpenMode::Append);
-                info!("Writing out file to {}", fast5_file_name);
+                let mut out_file = if x.pod5 {
+                    let mut pod = Pod5File::new(&output_file_name).unwrap();
+                    pod.push_run_info(run_info.unwrap());
+                    pod.write_run_info_to_ipc();
+                    OutputFileType::Pod5(pod)
+                } else {
+                    OutputFileType::Fast5(MultiFast5File::new(
+                        output_file_name.clone(),
+                        OpenMode::Append,
+                    ))
+                };
+                info!("Writing out file to {}", output_file_name);
                 let range_end = std::cmp::min(4000, read_infos.len());
                 for to_write_info in read_infos.drain(..range_end) {
                     // skip this read if we are trying to write it out twice
@@ -430,7 +484,8 @@ fn start_write_out_thread(
                         new_end = min(stop, to_write_info.read.len());
                     }
                     let signal = to_write_info.read[0..new_end].to_vec();
-                    // let signal = to_write_info.read.to_vec();
+
+                    let num_samples = signal.len() as u64;
                     debug!("{to_write_info:#?}");
                     if signal.is_empty() {
                         error!("Attempt to write empty signal");
@@ -464,18 +519,63 @@ fn start_write_out_thread(
                         config.parameters.get_sampling() as f64,
                         to_write_info.channel_number.clone(),
                     );
-                    multi
-                        .create_empty_read(
-                            to_write_info.read_id.clone(),
-                            run_id.clone(),
-                            &tracking_id,
-                            &context_tags,
-                            channel_info,
-                            &raw_attrs,
-                            signal,
-                        )
-                        .unwrap();
+                    match out_file {
+                        OutputFileType::Fast5(ref mut multi) => {
+                            multi
+                                .create_empty_read(
+                                    to_write_info.read_id.clone(),
+                                    run_id.clone(),
+                                    &tracking_id,
+                                    &context_tags,
+                                    channel_info,
+                                    &raw_attrs,
+                                    signal,
+                                )
+                                .unwrap();
+                        }
+                        OutputFileType::Pod5(ref mut pod5) => {
+                            let end_reason = if to_write_info.was_unblocked {
+                                EndReason::DATA_SERVICE_UNBLOCK_MUX_CHANGE
+                            } else {
+                                EndReason::SIGNAL_POSITIVE
+                            };
+                            let pt = match ic_pt {
+                                PoreType::R9 => PodPoreType::R9,
+                                PoreType::R10 => PodPoreType::R10,
+                            };
+                            let read: PodReadInfo = PodReadInfo {
+                                read_id: Uuid::parse_str(to_write_info.read_id.as_str()).unwrap(),
+                                pore_type: pt,
+                                signal_: signal,
+                                channel: to_write_info.channel as u16,
+                                well: 1,
+                                calibration_offset: -264.0,
+                                calibration_scale: 0.187_069_85,
+                                read_number: to_write_info.read_number,
+                                start: 1,
+                                median_before: 100.0,
+                                tracked_scaling_scale: 1.0,
+                                tracked_scaling_shift: 0.1,
+                                predicted_scaling_scale: 1.5,
+                                predicted_scaling_shift: 0.15,
+                                num_reads_since_mux_change: 10,
+                                time_since_mux_change: 5.0,
+                                num_minknow_events: 1000,
+                                end_reason,
+                                end_reason_forced: false,
+                                run_info: run_id.clone(),
+                                num_samples,
+                            };
+                            pod5.push_read(read);
+                        }
+                    }
                 }
+                if let OutputFileType::Pod5(ref mut pod5) = out_file {
+                    pod5.write_reads_to_ipc();
+                    // println!("{:#?}", pod5._signal);
+                    pod5.write_signal_to_ipc();
+                    pod5.write_footer();
+                };
                 file_counter += 1;
                 read_numbers_seen.clear();
             }
