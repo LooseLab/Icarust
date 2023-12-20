@@ -417,18 +417,18 @@ fn start_write_out_thread(
                         .map(|(k, v)| (k.to_string(), v.to_string()))
                         .collect(),
                     experiment_name: "Experiment 1".to_string(),
-                    flow_cell_id: "FCID123".to_string(),
+                    flow_cell_id: config.parameters.flowcell_name.to_string(),
                     flow_cell_product_code: "PC123".to_string(),
                     protocol_name: "Protocol 1".to_string(),
                     protocol_run_id: "PRID123".to_string(),
                     protocol_start_time: 1625097600000,
-                    sample_id: "Sample 1".to_string(),
+                    sample_id: config.parameters.sample_name.to_string(),
                     sample_rate: 4000,
                     sequencing_kit: "Kit X".to_string(),
                     sequencer_position: "bamboo".to_string(),
                     sequencer_position_type: "Gigachad".to_string(),
                     software: "Icarust v1.0".to_string(),
-                    system_name: "System 1".to_string(),
+                    system_name: "Of a down".to_string(),
                     system_type: "System Type A".to_string(),
                     tracking_id: tracking_id
                         .iter()
