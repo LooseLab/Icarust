@@ -16,6 +16,9 @@ pub struct Cli {
     /// Path to the config_ini file to usse
     #[clap(short, long, value_parser)]
     pub config_ini: Option<std::path::PathBuf>,
+    /// Write out pod5 files
+    #[clap(short, long)]
+    pub pod5: bool,
 }
 
 impl Cli {
@@ -31,8 +34,8 @@ impl Cli {
         use log::LevelFilter::*;
 
         let log_level = match self.verbosity {
-            level if level == 1 => Info,
-            level if level == 2 => Debug,
+            1 => Info,
+            2 => Debug,
             level if level > 2 => Trace,
             _ => Warn,
         };
