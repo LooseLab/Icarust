@@ -63,20 +63,13 @@ use crate::read_length_distribution::ReadLengthDist;
 
 /// Holds the  type of the pore we are simulating
 #[derive(Clone)]
-pub enum PoreType {
-    /// R10 pore
-    R10,
-    /// R9 pore
-    R9,
-}
-
-/// Holds the  type of the pore we are simulating
-#[derive(Clone)]
-pub enum AnalyteType {
-    /// DNA
-    DNA,
-    /// RNA
-    RNA,
+pub enum Model {
+    /// R10 model
+    DNAR10,
+    /// R9 model
+    DNAR9,
+    /// R9 model
+    RNAR9,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -89,8 +82,7 @@ struct Config {
     target_yield: f64,
     working_pore_percent: Option<usize>,
     simulation_type: Option<String>,
-    pore_type: Option<String>,
-    analyte_type: Option<String>,
+    model_type: Option<String>,
 }
 
 impl Config {
@@ -99,30 +91,17 @@ impl Config {
     }
 
     /// Check that we have a valid pore type or return the default R10 pore.
-    pub fn check_pore_type(&self) -> PoreType {
-        match &self.pore_type {
-            Some(pore_type) => match pore_type.as_str() {
-                "R10" => PoreType::R10,
-                "R9" => PoreType::R9,
+    pub fn check_model_type(&self) -> Model {
+        match &self.model_type {
+            Some(model_type) => match model_type.as_str() {
+                "DNAR10" => Model::DNAR10,
+                "DNAR9" => Model::DNAR9,
+                "RNAR9" => Model::RNAR9,
                 _ => {
-                    panic!("Invalid pore type specified")
+                    panic!("Invalid model specified")
                 }
             },
-            None => PoreType::R9,
-        }
-    }
-
-    /// Check that we have a valid analyte type or return the default DNA.
-    pub fn check_analyte_type(&self) -> AnalyteType {
-        match &self.analyte_type {
-            Some(analyte_type) => match analyte_type.as_str() {
-                "DNA" => AnalyteType::DNA,
-                "RNA" => AnalyteType::RNA,
-                _ => {
-                    panic!("Invalid analyte_type type specified")
-                }
-            },
-            None => AnalyteType::DNA,
+            None => Model::DNAR9,
         }
     }
 
@@ -172,7 +151,7 @@ impl Config {
 
     // Check config fields and error out if there's a problem
     pub fn check_fields(&self) {
-        let _pore_type = &self.check_pore_type();
+        let _model_type = &self.check_model_type();
         for sample in &self.sample {
             match sample.mean_read_length {
                 Some(_) => {}

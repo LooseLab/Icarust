@@ -54,8 +54,7 @@ use crate::services::minknow_api::data::{
     get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
-use crate::PoreType;
-use crate::AnalyteType;
+use crate::Model;
 use crate::{Config, Sample, _load_toml};
 
 /// unused
@@ -117,8 +116,7 @@ struct SampleInfo {
     is_barcoded: bool,
     file_weights: Vec<WeightedIndex<usize>>,
     /// We use this to determine whether we are reading signal ot Sequence from the file info (R10 -> Sequence)
-    pore_type: PoreType,
-    analyte_type: AnalyteType,
+    model_type: Model,
 }
 impl fmt::Debug for SampleInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -152,8 +150,7 @@ impl SampleInfo {
         is_amplicon: bool,
         is_barcoded: bool,
         read_len_dist: ReadLengthDist,
-        pore_type: PoreType,
-        analyte_type: AnalyteType,
+        model_type: Model,
     ) -> SampleInfo {
         SampleInfo {
             name,
@@ -165,8 +162,7 @@ impl SampleInfo {
             is_amplicon,
             is_barcoded,
             file_weights: vec![],
-            pore_type,
-            analyte_type,
+            model_type,
         }
     }
 }
@@ -282,7 +278,7 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
         if let Some(barcode_vec) = &sample.barcodes {
             for barcode in barcode_vec.iter() {
                 let (barcode_squig_1, barcode_squig_2) =
-                    get_barcode_squiggle(barcode, config.check_pore_type()).unwrap();
+                    get_barcode_squiggle(barcode, config.check_model_type()).unwrap();
                 barcodes.insert(barcode.clone(), (barcode_squig_1, barcode_squig_2));
             }
         }
@@ -294,11 +290,12 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
 /// setting R10 as the poretype appends_R10 and fetches R10 data
 fn get_barcode_squiggle(
     barcode: &String,
-    pore_type: PoreType,
+    model_type: Model,
 ) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError> {
-    let r10_suffix = match pore_type {
-        PoreType::R10 => "_R10",
-        PoreType::R9 => "",
+    let r10_suffix = match model_type {
+        Model::DNAR10 => "_DNAR10",
+        Model::DNAR9 => "__DNAR9",
+        Model::RNAR9 => "_RNAR9",
     };
     info!(
         "Fetching barcode squiggle for barcode {} at {}",
@@ -743,31 +740,35 @@ fn process_samples_from_config(
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(config.get_rand_seed());
 
     // Select simulation type
-    let sim_type = match config.check_analyte_type() {
-        AnalyteType::DNA => simulation::SimType::DNAR1041,
-        AnalyteType::RNA => simulation::SimType::RNAR94,
-    };
+    let sim_type = match config.check_model_type() {
+        Model::DNAR10 => simulation::SimType::DNAR10,
+        Model::RNAR9 => simulation::SimType::RNAR9,
+        _ => simulation::SimType::DNAR10
+    };    
 
     // Select Model to Simulate
-    let model = match (config.check_analyte_type(), config.check_pore_type()) {
-        (AnalyteType::DNA, PoreType::R10) => "static/R10_model.tsv",
-        (AnalyteType::RNA, PoreType::R10) => "static/rna_r9.4_180mv_70bps/5mer_levels_v1.txt",
-        _ => {
-            // Default case if none of the specified combinations match
-            "static/R10_model.tsv"
-        }
+    let model = match config.check_model_type() {
+        Model::DNAR10 => "static/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt",
+        Model::RNAR9 => "static/rna_r9.4_180mv_70bps/5mer_levels_v1.txt",
+        _ => "static/R10_model.tsv"
     };
 
     let kmer_string = read_to_string(model).expect("Failed to read kmers to string");
 
-    let kmers = match config.check_pore_type() {
-        PoreType::R10 => {
+    let kmers = match config.check_model_type() {
+        Model::DNAR10 => {
             let (_, kmer_hashmap) =
                 simulation::parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
             Some(kmer_hashmap)
         }
-        PoreType::R9 => None,
+        Model::RNAR9 => {
+            let (_, kmer_hashmap) =
+                simulation::parse_kmers(&kmer_string).expect("Failed to parse R9 kmers");
+            Some(kmer_hashmap)
+        }
+        Model::DNAR9 => None,
     };
+
     // Now iterate all the samples and setup any required fields for the type of run wie have. Possible combos:
     //      Amplicon barcoded
     //      Amplicon unbarcoded
@@ -785,7 +786,7 @@ fn process_samples_from_config(
             t.sort_by_key(|a| a.path());
             for entry in t {
                 // only read files that are .npy squiggle
-                if entry.path().extension().unwrap().to_str().unwrap() == "npy" {
+                if entry.path().is_npy() {
                     info!("Reading view for{:#?}", entry.path());
                     read_views_of_squiggle_data(
                         &mut views,
@@ -814,9 +815,9 @@ fn process_samples_from_config(
                 Some(_) => read_sample_distribution_files(sample),
                 // generate amplicon distributions for each barcode
                 None => {
-                    let num_contigs = match config.check_pore_type() {
-                        PoreType::R10 => simulation::num_sequences(sample.input_genome.clone()),
-                        PoreType::R9 => sample_info.files.len(),
+                    let num_contigs = match config.check_model_type() {
+                        Model::DNAR10 | Model::RNAR9 => simulation::num_sequences(sample.input_genome.clone()),
+                        Model::DNAR9 => sample_info.files.len(),
                     };
                     let mut file_distributions = vec![];
                     // If we have barcodes
@@ -881,20 +882,19 @@ fn process_samples_from_config(
             }
             
             let sample_info = views.get_mut(&sample.name).unwrap();
-            match config.check_pore_type() {
-                PoreType::R9 => {
+            match config.check_model_type() {
+                Model::DNAR9 => {
                     // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
                     // so we only ever see this file when we generate a read
                     sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
                 }
-                PoreType::R10 => {
+                Model::DNAR10 | Model::RNAR9 => {
                     let distributions: Vec<WeightedIndex<usize>> = match &sample.weights_files {
                         Some(_) => read_sample_distribution_files(sample),
                         // generate amplicon distributions for each barcode
                         None => {
                             let num_contigs = simulation::num_sequences(sample.input_genome.clone());
-                            let read_lengths =
-                                simulation::sequence_lengths(sample.input_genome.clone());
+                            let read_lengths = simulation::sequence_lengths(sample.input_genome.clone());
                             let mut file_distributions = vec![];
                             // If we have barcodes
                             if let Some(barcodes) = &sample.barcodes {
@@ -917,7 +917,6 @@ fn process_samples_from_config(
                             file_distributions
                         }
                     };
-                    warn!("{:?}", &distributions);
                     sample_info.file_weights = distributions;
                 }
             }
@@ -1044,8 +1043,7 @@ fn read_views_of_sequence_data(
                 sample_info.is_amplicon(),
                 sample_info.is_barcoded(),
                 read_length_dist,
-                PoreType::R10,
-                AnalyteType::DNA,
+                Model::DNAR10,
             ));
         sample.files.push(file_info);
         done += 1;
@@ -1090,8 +1088,7 @@ fn read_views_of_squiggle_data(
             sample_info.is_amplicon(),
             sample_info.is_barcoded(),
             read_length_dist,
-            PoreType::R9,
-            AnalyteType::DNA,
+            Model::DNAR9,
         ));
     sample.files.push(file_info)
 }
@@ -1180,8 +1177,6 @@ fn generate_read(
     value.start_time_seconds = (Utc::now().timestamp() as u64 - start_time) as usize;
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
-    // warn!{"{:?}", "here"};
-    // warn!{"{:?}", dist};
     let sample_choice: &String = &samples[dist.sample(rng)];
     value.read_sample_name = sample_choice.clone();
     let sample_info: &SampleInfo = &views[sample_choice];
@@ -1214,8 +1209,6 @@ fn generate_read(
         )
         .unwrap();
     
-    // warn!("{:?}", sample_info.files);
-    // warn!("{:?}", sample_info.file_weights.get(file_weight_choice).unwrap().sample(rng));
     // earliest possible start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {
         true => 0,
@@ -1225,16 +1218,15 @@ fn generate_read(
     let read_distribution = &sample_info.read_len_dist;
     let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
-    // let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
-    let end = file_info.contig_len - 1;
-    // warn!{"{:?}", file_info.contig_len}
+    let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
+    // let end = file_info.contig_len - 1;
     let (mut barcode_1_squig, mut barcode_2_squig) = (vec![], vec![]);
     // Barcode name has been provided for this sample
     if sample_info.is_barcoded {
         (barcode_1_squig, barcode_2_squig) = barcode_squig.get(barcode.unwrap()).unwrap().clone();
     }
-    let mut squiggle = match sample_info.pore_type {
-        PoreType::R9 => {
+    let mut squiggle = match sample_info.model_type {
+        Model::DNAR9 => {
             let mut read_squig = file_info
                 .view
                 .as_ref()
@@ -1248,7 +1240,7 @@ fn generate_read(
             }
             read_squig
         }
-        PoreType::R10 => {
+        Model::DNAR10 | Model::RNAR9 => {
             // generate a prefix
             let mut prefix = simulation::generate_prefix().expect("NO PREFIX BAD");
             //  read the signal here
@@ -1264,10 +1256,9 @@ fn generate_read(
                 barcode_1_squig.extend(read_squig);
                 read_squig = barcode_1_squig;
             }
-            // prefix.extend(read_squig);
-            // warn!{"{:?}", prefix.len()}
-            // prefix
-            read_squig
+            prefix.extend(read_squig);
+            prefix
+            // read_squig
         }
     };
 
@@ -1537,18 +1528,11 @@ impl DataService for DataServiceServicer {
                                 let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
                                 // slice of signal is too short
                                 if start > stop || (stop - start) < chunk_size as usize {
-                                    warn!("{:?}", "a");
-                                    warn!("{:?} start is:", start);
-                                    warn!("{:?} stop is:", stop);
-                                    warn!("{:?} chunk_size is:", chunk_size);
-                                    // warn!("{:?}", start > stop || (stop - start) < chunk_size);
                                     continue
                                 }
 
                                 // Read through pore is too long ( roughly longer than 4.5kb worth of bases through pore
                                 if stop > max_read_len_samples {
-                                    warn!("{:?}", "b");
-                                    warn!("{:?}", stop > max_read_len_samples);
                                     continue
                                 }
 
@@ -1567,8 +1551,6 @@ impl DataService for DataServiceServicer {
                                 }
                                 // CHeck start is not past end
                                 if start > read_info.read.len() {
-                                    warn!("{:?}", "c");
-                                    warn!("{:?}", start > read_info.read.len());
                                     continue
                                 }
 
@@ -1580,8 +1562,6 @@ impl DataService for DataServiceServicer {
                                 let read_chunk = read_info.read[start..stop].to_vec();
                                 // Chunk is too short
                                 if read_chunk.len() < 300 {
-                                    warn!("{:?}", "d");
-                                    warn!("{:?}", read_chunk.len() < 300);
                                     continue
                                 }
                                 container.push((read_info.channel, ReadData{

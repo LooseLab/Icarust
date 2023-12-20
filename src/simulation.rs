@@ -100,16 +100,16 @@ pub struct SimSettings {
     /// noise
     noise: bool,
     /// 3to5
-    direction: bool
+    reverse: bool
 }
 
 /// Simulation type - Promethion or MInion. We always use Promethion
 #[derive(Clone)]
 pub enum SimType {
     /// R10
-    DNAR1041,
+    DNAR10,
     /// R10
-    RNAR94,
+    RNAR9,
 }
 
 // const PREFIX: &str =
@@ -119,21 +119,21 @@ const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
 /// return the simulation profile for a given simulation type
 pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
     match sim_type {
-        SimType::DNAR1041 => SimSettings {
+        SimType::DNAR10 => SimSettings {
             digitisation: 2048.0,
             range: 200.0,
             sampling: 10,
             kmer_len: 9,
             noise: false,
-            direction: false
+            reverse: false
         },
-        SimType::RNAR94 => SimSettings {
+        SimType::RNAR9 => SimSettings {
             digitisation: 2048.0,
             range: 200.0,
             sampling: 43,
             kmer_len: 5,
             noise: true,
-            direction: true
+            reverse: true
         },
     }
 }
@@ -141,8 +141,8 @@ pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
 ///
 pub fn get_is_rna(sim_type: SimType) -> bool {
     match sim_type {
-        SimType::DNAR1041 => false,
-        SimType::RNAR94 => true,
+        SimType::DNAR10 => false,
+        SimType::RNAR9 => true,
     }
 }
 
@@ -241,13 +241,9 @@ pub fn convert_to_signal<'a>(
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let sampling = profile.sampling;
     let kmer_len = profile.kmer_len;
-    let direction = profile.direction;
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * sampling as usize);
-    warn!("{:?}", record.num_bases() * sampling as usize);
     let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
     let num_kmers: usize = r.len() - (kmer_len as usize);
-    warn!("{:?}", r.len());
-    warn!("{:?}", kmer_len as usize - 1);
     let sty = ProgressStyle::with_template(
         "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
     )
@@ -256,10 +252,8 @@ pub fn convert_to_signal<'a>(
     let pb: ProgressBar = ProgressBar::new(num_kmers.try_into().unwrap());
     pb.set_style(sty);
     for kmer in r.kmers(kmer_len as u8) {
-        // warn!("{:?}", kmer);
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
         kmer = replace_char_with_base(&kmer, None);
-        // debug!("{kmer}");
         let value = kmers.get(&kmer.to_uppercase()).unwrap_or_else(|| {
             panic!(
                 "failed to retrieve value for kmer {kmer}, on contig{}",
@@ -291,8 +285,9 @@ pub fn convert_to_signal<'a>(
         pb.inc(1);
     }
     pb.finish_with_message("done");
-    signal_vec.reverse();
-
+    if(profile.reverse){
+        signal_vec.reverse();
+    }
     Ok(signal_vec)
 }
 

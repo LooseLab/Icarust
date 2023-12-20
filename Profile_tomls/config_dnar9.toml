@@ -1,0 +1,25 @@
+output_path = "/tmp/"
+target_yield = 100000000000
+working_pore_percent = 85
+model_type = "DNAR9"
+
+[parameters]
+sample_name = "test"
+experiment_name = "test_2_bacteria"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "FenceSitter"
+sampling = 4000
+
+[[sample]]
+name = "Bacteria 1"
+input_genome = "squiggle_arrs/NC_002516.2.squiggle.npy"
+mean_read_length = 20000
+weight = 1
+
+[[sample]]
+name = "Bacteria 2"
+input_genome = "squiggle_arrs/NC_003997.3.squiggle.npy"
+mean_read_length = 15000
+weight = 2
