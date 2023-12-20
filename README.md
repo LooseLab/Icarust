@@ -10,7 +10,7 @@ Figure 1 - Accurate depiction of a man learning Rust ☠️
 
 ## Quick start docker ( Recommended)
 Alternatively we offer a Docker container, which can be found at https://www.github.com/looselab/icarust_docker. 
-This negates the need for any manual building, dependency management and is simple and easy to use.
+This negates the need for any manual building, dependency management and is simple(er) to use.
 #### Caveats
 MacOS runs docker volumes through virtualisation, rather than on the underlying OS. This results in very slow read/write for directories shared bewteen the host computer and the container. Whilst it is possible to run Icarust using docker on Mac, it may be better to run "natively", following the instructions below.
 
@@ -28,10 +28,19 @@ sudo apt install -y protobuf-compiler libprotobuf-dev
 
 #### TLS
 
-Minknow core 5.x requires a secure channel connection be made by the minknow API. IN order to do this it is neccessary to use the localhost certificates provided with an installed version of minknow. Therefore currently _MinKNOW MUST BE INSTALLED_. The certificates are read from:
-
-- **linux (ubuntu)**: `/opt/ont/minnow/conf/rpc-certs/`
-- **macOS**: `/Applications/MinKNOW.app/Contents/Resources/conf/rpc-certs`
+Minknow core 5.x requires a secure channel connection be made by the minknow API. IN order to do this, any programs connecting to Icarusts facsimile of the MinKNOW RPC will need to set the following environment variables:
+```python
+from minknow_api.manager import Manager
+import os
+os.environ["MINKNOW_API_CLIENT_CERTIFICATE_CHAIN"] = "/Path/to/Icarust/static/tls_certs/ca.crt"
+os.environ["MINKNOW_API_CLIENT_KEY"] = "/Path/to/Icarust/static/tls_certs/ca.key"              
+os.environ["MINKNOW_TRUSTED_CA"] = "/Path/to/Icarust/static/tls_certs/ca.crt"                  
+from minknow_api.manager import Manager                                                      
+m = Manager( port=9502)                                                                      
+pos = next(m.flow_cell_positions())                                                          
+con = pos.connect()                                                                          
+con.instance.get_version_info()    
+```
 
 
 In order to run Icarust with and view the options - 
