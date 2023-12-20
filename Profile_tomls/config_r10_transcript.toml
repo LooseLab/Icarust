@@ -1,4 +1,4 @@
-output_path = "/tmp/"
+output_path = "/data/satrio/tmp/"
 target_yield = 100000000000
 working_pore_percent = 85
 pore_type = "R10"
@@ -14,7 +14,8 @@ position = "FenceSitter"
 
 [[sample]]
 name = "Human"
-input_genome = "docker/squiggle_arrs/gencode.v40.transcripts.pico.fa"
-mean_read_length = 1000
+#input_genome = "/data/satrio/test-icarust-as/gencode.v44.transcripts.chr17.fa"
+input_genome = "/data/satrio/test-icarust-as/transcript.tp53.fa"
+mean_read_length = 3000
 weight = 1
 amplicon = true

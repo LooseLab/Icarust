@@ -15,7 +15,7 @@ use nom::number::complete::double;
 use nom::sequence::{preceded, separated_pair, terminated, tuple};
 use nom::IResult;
 use rand::seq::SliceRandom;
-use rand::Rng;
+use rand::prelude::*;
 use rand_distr::Normal;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -44,7 +44,7 @@ lazy_static! {
 ///  - some other punctuation is converted to gaps
 ///  - IUPAC bases may be converted to N's depending on the parameter passed in
 ///  - everything else is considered a N
-pub fn normalize(seq: &[u8], direction: bool) -> Option<Vec<u8>> {
+pub fn normalize(seq: &[u8]) -> Option<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::with_capacity(seq.len());
     let mut changed: bool = false;
 
@@ -66,9 +66,6 @@ pub fn normalize(seq: &[u8], direction: bool) -> Option<Vec<u8>> {
         changed = changed || char_changed;
         if new_char != b' ' {
             buf.push(new_char);
-        }
-        if direction {
-            buf.reverse()
         }
     }
     if changed {
@@ -132,7 +129,7 @@ pub fn get_sim_profile(sim_type: SimType) -> R10Settings {
         },
         SimType::RNAR94 => R10Settings {
             digitisation: 2048.0,
-            range: 548.0,
+            range: 200.0,
             sampling: 43,
             kmer_len: 5,
             noise: true,
@@ -180,7 +177,7 @@ pub fn parse_kmers(input: &str) -> IResult<&str, FnvHashMap<String, Vec<f64>>> {
     let mut kmers: HashMap<String, Vec<f64>, std::hash::BuildHasherDefault<fnv::FnvHasher>> =
         FnvHashMap::default();
     for x in kmer_vec {
-        kmers.insert(x.sequence, vec![x.value, x.value]);
+        kmers.insert(x.sequence, vec![x.value, x.std_level]);
     }
     Ok((remainder, kmers))
 }
@@ -247,8 +244,8 @@ pub fn convert_to_signal<'a>(
     let direction = profile.direction;
     let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * sampling as usize);
     warn!("{:?}", record.num_bases() * sampling as usize);
-    let r: Cow<'a, [u8]> = normalize(record.sequence(), direction).unwrap().into();
-    let num_kmers: usize = r.len() - (kmer_len as usize - 1);
+    let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
+    let num_kmers: usize = r.len() - (kmer_len as usize);
     warn!("{:?}", r.len());
     warn!("{:?}", kmer_len as usize - 1);
     let sty = ProgressStyle::with_template(
@@ -269,33 +266,32 @@ pub fn convert_to_signal<'a>(
                 String::from_utf8(record.id().to_vec()).unwrap()
             )
         });
-
-        let mut x = 0.0;
-
-        if profile.noise {
-            // Generate a random number using the normal distribution
-            let mut rng = rand::thread_rng();
-            let gauss: f64 = rng.sample(Normal::new(0.0, 1.0).unwrap());
-
-            // Apply noise to the value;
-            let value_with_noise = (gauss * value[1] * 1.0) + value[0];
-
-            // Calculate the final value based on the profile
-            x = (value_with_noise * profile.digitisation) / profile.range;
-        } else {
-            // Calculate the value without noise based on the profile
-            x = (value[0] * profile.digitisation) / profile.range;
-        }
+        let mut rng = StdRng::seed_from_u64(123);
 
         // N sampling for each base (sample_rate / bases per second )
         // This could also be worked out from profile.dwell_mean
         // Iterate and push samples into the signal_vec
         for _ in 0..sampling {
+            let gauss: f64 = rng.sample(Normal::new(0.0, 1.0).unwrap());
+            let mut x = 0.0;
+            if profile.noise {
+                // Generate a random number using the normal distribution
+                // Apply noise to the value;
+                let value_with_noise = (gauss * value[1] * 1.0) + value[0];
+    
+                // Calculate the final value based on the profile
+                x = (value_with_noise * profile.digitisation) / profile.range;
+            } else {
+                // Calculate the value without noise based on the profile
+                x = (value[0] * profile.digitisation) / profile.range;
+            }
+
             signal_vec.push(x as i16);
         }
         pb.inc(1);
     }
     pb.finish_with_message("done");
+    signal_vec.reverse();
 
     Ok(signal_vec)
 }
