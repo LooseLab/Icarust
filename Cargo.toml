@@ -22,7 +22,7 @@ rand_distr = "0.4"
 fnv = "1.0"
 log = "0.4.17"
 pretty_env_logger = "0.4.0"
-uuid = { version = "0.8", features = ["v4"]}
+uuid = { version = "1.6.1", features = ["v4"]}
 ndarray-npy = { version = "0.8.1", default-features = false }
 ndarray = "0.15.0"
 memmap2 = "0.5.3"
@@ -38,6 +38,7 @@ fern = { version = "0.6.2", features = ["colored", "chrono"] }
 humantime = "2.1.0"
 lazy_static = "1.4.0"
 indicatif = "0.17.5"
+podders = "0.1.2"
 
 
 [build-dependencies]
