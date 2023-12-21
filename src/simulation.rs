@@ -153,10 +153,7 @@ pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
 
 ///
 pub fn get_is_rna(sim_type: SimType) -> bool {
-    match sim_type {
-        SimType::RNAR9 => true,
-        _ => false,
-    }
+    matches!(sim_type, SimType::RNAR9)
 }
 
 /// Use nom to parse an individual line in the kmers file
@@ -267,7 +264,7 @@ fn add_laplace_noise(data: &mut [f64], scale: f64) {
     let mut sampler = Independent(&laplace, &mut source);
     for value in data {
         let noise: f64 = sampler.next().unwrap();
-        *value = *value + noise;
+        *value += noise;
     }
 }
 
@@ -275,7 +272,7 @@ fn add_laplace_noise(data: &mut [f64], scale: f64) {
 fn add_gaussian_noise(value: &mut f64, std_dev: f64, rng: &mut StdRng) {
     let normal = Normal::new(0.0, std_dev).unwrap();
     let noise: f64 = rng.sample(normal);
-    *value = *value + noise;
+    *value += noise;
 }
 
 /// Convert a given FASTA sequence to signal, digitising it and return a Vector of I16
@@ -321,11 +318,8 @@ pub fn convert_to_signal<'a>(
         }
         pb.inc(1);
     }
-    if profile.noise {
-        match profile.sim_type {
-            SimType::DNAR10 => add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt()),
-            _ => {}
-        }
+    if profile.noise & (profile.sim_type == SimType::DNAR10) {
+        add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt());
     }
     let mut signal_vec: Vec<i16> = signal_vec
         .iter()
