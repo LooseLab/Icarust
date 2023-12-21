@@ -8,14 +8,15 @@ use ndarray_npy::ViewNpyExt;
 use needletail::parse_fastx_file;
 use needletail::parser::SequenceRecord;
 use needletail::{FastxReader, Sequence};
-use nom::character::complete::{alpha1, char, digit1, line_ending, multispace0, multispace1, tab};
-use nom::combinator::{map, map_res, recognize};
+use nom::character::complete::{alpha1, multispace0, tab};
+
 use nom::multi::many1;
 use nom::number::complete::double;
-use nom::sequence::{preceded, separated_pair, terminated, tuple};
+use nom::sequence::{separated_pair, terminated, tuple};
 use nom::IResult;
-use rand::seq::SliceRandom;
+use probability::prelude::*;
 use rand::prelude::*;
+use rand::seq::SliceRandom;
 use rand_distr::Normal;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -68,13 +69,8 @@ pub fn normalize(seq: &[u8]) -> Option<Vec<u8>> {
             buf.push(new_char);
         }
     }
-    if changed {
-        Some(buf)
-    } else {
-        // if return None will cause panic.
-        // Example very short siRNA without line breaks in genecode transcript.
-        Some(buf)
-    }
+
+    Some(buf)
 }
 
 /// hold a kmer
@@ -84,7 +80,15 @@ pub struct Kmer {
     /// The value for the signal of that 9mer
     pub value: f64,
     /// std_level
-    pub std_level: f64
+    pub std_level: Option<f64>,
+}
+
+/// Length of the kmer expected from the kmer model
+pub enum KmerType {
+    /// 5mer nucleotide record
+    FiveMer,
+    /// 9mer nucleotide record
+    NineMer,
 }
 
 /// Profile for sequencing
@@ -93,23 +97,27 @@ pub struct SimSettings {
     digitisation: f64,
     /// range
     range: f64,
-    /// sampling
-    sampling: i16,
+    /// samples_per_base
+    samples_per_base: i16,
     /// kmer
     kmer_len: i16,
     /// noise
     noise: bool,
     /// 3to5
-    reverse: bool
+    reverse: bool,
+    /// Simulation type
+    sim_type: SimType,
 }
 
 /// Simulation type - Promethion or MInion. We always use Promethion
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum SimType {
     /// R10
     DNAR10,
-    /// R10
+    /// R9
     RNAR9,
+    /// R9 DNA
+    DNAR9,
 }
 
 // const PREFIX: &str =
@@ -122,43 +130,54 @@ pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
         SimType::DNAR10 => SimSettings {
             digitisation: 2048.0,
             range: 200.0,
-            sampling: 10,
+            samples_per_base: 10,
             kmer_len: 9,
-            noise: false,
-            reverse: false
+            noise: true,
+            reverse: false,
+            sim_type: SimType::DNAR10,
         },
         SimType::RNAR9 => SimSettings {
             digitisation: 2048.0,
             range: 200.0,
-            sampling: 43,
+            samples_per_base: 43,
             kmer_len: 5,
             noise: true,
-            reverse: true
+            reverse: true,
+            sim_type: SimType::RNAR9,
         },
+        _ => {
+            unimplemented!()
+        }
     }
 }
 
 ///
 pub fn get_is_rna(sim_type: SimType) -> bool {
     match sim_type {
-        SimType::DNAR10 => false,
         SimType::RNAR9 => true,
+        _ => false,
     }
 }
 
 /// Use nom to parse an individual line in the kmers file
-fn parse_kmer_record(input: &str) -> IResult<&str, Kmer> {
+fn parse_9mer_record(input: &str) -> IResult<&str, Kmer> {
+    let (remaining, (kmer, value)) =
+        separated_pair(alpha1, tab, terminated(double, multispace0))(input)?;
+    let kmer = kmer.to_string();
+    Ok((
+        remaining,
+        Kmer {
+            sequence: kmer,
+            value,
+            std_level: None,
+        },
+    ))
+}
+
+/// Use nom to parse an individual line in the kmers file
+fn parse_5mer_record(input: &str) -> IResult<&str, Kmer> {
     let (remaining, (kmer, _, value, _, std_level)) =
-    terminated(
-        tuple((
-            alpha1,
-            tab,
-            double,
-            tab,
-            double,
-        )),
-        multispace0
-    )(input)?;
+        terminated(tuple((alpha1, tab, double, tab, double)), multispace0)(input)?;
 
     let kmer = kmer.to_string();
     Ok((
@@ -166,18 +185,26 @@ fn parse_kmer_record(input: &str) -> IResult<&str, Kmer> {
         Kmer {
             sequence: kmer,
             value,
-            std_level
+            std_level: Some(std_level),
         },
     ))
 }
-
 /// Parse kmers and corresponding values from the file
-pub fn parse_kmers(input: &str) -> IResult<&str, FnvHashMap<String, Vec<f64>>> {
-    let (remainder, kmer_vec) = many1(parse_kmer_record)(input)?;
-    let mut kmers: HashMap<String, Vec<f64>, std::hash::BuildHasherDefault<fnv::FnvHasher>> =
-        FnvHashMap::default();
+pub fn parse_kmers(
+    input: &str,
+    kmer_length: KmerType,
+) -> IResult<&str, FnvHashMap<String, (f64, Option<f64>)>> {
+    let (remainder, kmer_vec) = match kmer_length {
+        KmerType::NineMer => many1(parse_9mer_record)(input)?,
+        KmerType::FiveMer => many1(parse_5mer_record)(input)?,
+    };
+    let mut kmers: HashMap<
+        String,
+        (f64, Option<f64>),
+        std::hash::BuildHasherDefault<fnv::FnvHasher>,
+    > = FnvHashMap::default();
     for x in kmer_vec {
-        kmers.insert(x.sequence, vec![x.value, x.std_level]);
+        kmers.insert(x.sequence, (x.value, x.std_level));
     }
     Ok((remainder, kmers))
 }
@@ -233,15 +260,34 @@ pub fn sequence_lengths<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Vec<usize>
     read_lengths
 }
 
+/// Add laplace noise to each sample for a whole signal
+fn add_laplace_noise(data: &mut [f64], scale: f64) {
+    let laplace = Laplace::new(0.0, scale);
+    let mut source = source::default(42);
+    let mut sampler = Independent(&laplace, &mut source);
+    for value in data {
+        let noise: f64 = sampler.next().unwrap();
+        *value = *value + noise;
+    }
+}
+
+/// Add Gaussian noise to each sample individual, for RNA
+fn add_gaussian_noise(value: &mut f64, std_dev: f64, rng: &mut StdRng) {
+    let normal = Normal::new(0.0, std_dev).unwrap();
+    let noise: f64 = rng.sample(normal);
+    *value = *value + noise;
+}
+
 /// Convert a given FASTA sequence to signal, digitising it and return a Vector of I16
 pub fn convert_to_signal<'a>(
-    kmers: &FnvHashMap<String, Vec<f64>>,
+    kmers: &FnvHashMap<String, (f64, Option<f64>)>,
     record: &SequenceRecord,
-    profile: &SimSettings
+    profile: &SimSettings,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
-    let sampling = profile.sampling;
+    let samples_per_base = profile.samples_per_base;
     let kmer_len = profile.kmer_len;
-    let mut signal_vec: Vec<i16> = Vec::with_capacity(record.num_bases() * sampling as usize);
+    let mut signal_vec: Vec<f64> =
+        Vec::with_capacity(record.num_bases() * samples_per_base as usize);
     let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
     let num_kmers: usize = r.len() - (kmer_len as usize);
     let sty = ProgressStyle::with_template(
@@ -251,6 +297,8 @@ pub fn convert_to_signal<'a>(
     .progress_chars("##-");
     let pb: ProgressBar = ProgressBar::new(num_kmers.try_into().unwrap());
     pb.set_style(sty);
+    let mut rng = StdRng::seed_from_u64(123);
+
     for kmer in r.kmers(kmer_len as u8) {
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
         kmer = replace_char_with_base(&kmer, None);
@@ -260,34 +308,33 @@ pub fn convert_to_signal<'a>(
                 String::from_utf8(record.id().to_vec()).unwrap()
             )
         });
-        let mut rng = StdRng::seed_from_u64(123);
 
         // N sampling for each base (sample_rate / bases per second )
         // This could also be worked out from profile.dwell_mean
         // Iterate and push samples into the signal_vec
-        for _ in 0..sampling {
-            let gauss: f64 = rng.sample(Normal::new(0.0, 1.0).unwrap());
-            let mut x = 0.0;
-            if profile.noise {
-                // Generate a random number using the normal distribution
-                // Apply noise to the value;
-                let value_with_noise = (gauss * value[1] * 1.0) + value[0];
-    
-                // Calculate the final value based on the profile
-                x = (value_with_noise * profile.digitisation) / profile.range;
-            } else {
-                // Calculate the value without noise based on the profile
-                x = (value[0] * profile.digitisation) / profile.range;
+        for _ in 0..samples_per_base {
+            let mut x = value.0;
+            if profile.noise & (profile.sim_type == SimType::RNAR9) {
+                add_gaussian_noise(&mut x, value.1.unwrap(), &mut rng)
             }
-
-            signal_vec.push(x as i16);
+            signal_vec.push(x);
         }
         pb.inc(1);
     }
-    pb.finish_with_message("done");
-    if(profile.reverse){
+    if profile.noise {
+        match profile.sim_type {
+            SimType::DNAR10 => add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt()),
+            _ => {}
+        }
+    }
+    let mut signal_vec: Vec<i16> = signal_vec
+        .iter()
+        .map(|x| ((x * profile.digitisation) / profile.range) as i16)
+        .collect();
+    if profile.reverse {
         signal_vec.reverse();
     }
+    pb.finish_with_message("done");
     Ok(signal_vec)
 }
 
