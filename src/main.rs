@@ -14,8 +14,8 @@
 /// The module pertaining the CLI code
 pub mod cli;
 mod impl_services;
-pub mod simulation;
 mod reacquisition_distribution;
+pub mod simulation;
 pub mod utils;
 #[macro_use]
 extern crate log;
@@ -62,14 +62,21 @@ use crate::reacquisition_distribution::{DeathChance, _calculate_death_chance};
 use crate::read_length_distribution::ReadLengthDist;
 
 /// Holds the  type of the pore we are simulating
-#[derive(Clone)]
-pub enum Model {
+#[derive(Clone, Copy)]
+pub enum PoreType {
     /// R10 model
-    DNAR10,
+    R10,
     /// R9 model
-    DNAR9,
-    /// R9 model
-    RNAR9,
+    R9,
+}
+
+/// Type of simulation - RNA or DNA? :hmmmm:
+#[derive(Clone, Copy)]
+pub enum NucleotideType {
+    /// DNA -ACGT baby
+    DNA,
+    /// RNA - boooo
+    RNA,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -81,8 +88,8 @@ struct Config {
     random_seed: Option<u64>,
     target_yield: f64,
     working_pore_percent: Option<usize>,
-    simulation_type: Option<String>,
-    model_type: Option<String>,
+    nucleotide_type: Option<String>,
+    pore_type: Option<String>,
 }
 
 impl Config {
@@ -90,21 +97,33 @@ impl Config {
         self.working_pore_percent.unwrap_or(90)
     }
 
-    /// Check that we have a valid pore type or return the default R10 pore.
-    pub fn check_model_type(&self) -> Model {
-        match &self.model_type {
-            Some(model_type) => match model_type.as_str() {
-                "DNAR10" => Model::DNAR10,
-                "DNAR9" => Model::DNAR9,
-                "RNAR9" => Model::RNAR9,
+    /// Check that we have a valid pore type if None specified, return R10.
+    pub fn check_pore_type(&self) -> PoreType {
+        match &self.pore_type {
+            Some(pore_type) => match pore_type.as_str() {
+                "R10" => PoreType::R10,
+                "R9" => PoreType::R9,
                 _ => {
-                    panic!("Invalid model specified")
+                    panic!("Invalid model specified - must be one of R10 or R9")
                 }
             },
-            None => Model::DNAR9,
+            None => PoreType::R10,
         }
     }
 
+    /// Check whether we are simulating RNA or DNA - if not specified in config - DNA
+    pub fn check_dna_or_rna(&self) -> NucleotideType {
+        match &self.nucleotide_type {
+            Some(nucleotide_type) => match nucleotide_type.as_str() {
+                "DNA" => NucleotideType::DNA,
+                "RNA" => NucleotideType::RNA,
+                _ => {
+                    panic!("Invalid Nucleotide specified - must be one of DNA or RNA")
+                }
+            },
+            None => NucleotideType::DNA,
+        }
+    }
     /// Calculate the chance a pore will die.
     pub fn calculate_death_chance(&self, starting_channels: usize) -> HashMap<String, DeathChance> {
         let target_yield = &self.target_yield;
@@ -151,7 +170,7 @@ impl Config {
 
     // Check config fields and error out if there's a problem
     pub fn check_fields(&self) {
-        let _model_type = &self.check_model_type();
+        let _ = &self.check_pore_type();
         for sample in &self.sample {
             match sample.mean_read_length {
                 Some(_) => {}
@@ -184,18 +203,21 @@ struct Parameters {
     device_id: String,
     position: String,
     break_read_ms: Option<u64>,
-    sampling: Option<u64>
+    /// The sample rate in Hz - one of 4000 or 5000. Only used for RNA R9 and DNA R10
+    sample_rate: Option<u64>,
 }
 
 impl Parameters {
+    /// Return the chunk size of sample measured in ms. If not specified, defaults to 400ms.
     pub fn get_chunk_size_ms(&self) -> u64 {
         self.break_read_ms.unwrap_or(400)
     }
 }
 
 impl Parameters {
-    pub fn get_sampling(&self) -> u64 {
-        self.sampling.unwrap_or(4000)
+    /// Return the sample rate (hz) of the signal in pores. If not specified, returns 4000.
+    pub fn get_sample_rate(&self) -> u64 {
+        self.sample_rate.unwrap_or(4000)
     }
 }
 
@@ -213,11 +235,14 @@ struct Sample {
 }
 
 impl Sample {
-    pub fn get_read_len_dist(&self, global_read_len: Option<f64>, sampling: u64) -> ReadLengthDist {
-
+    pub fn get_read_len_dist(
+        &self,
+        global_read_len: Option<f64>,
+        sample_rate: u64,
+    ) -> ReadLengthDist {
         match self.mean_read_length {
-            Some(mrl) => ReadLengthDist::new(mrl / 400.0 * sampling as f64),
-            None => ReadLengthDist::new(global_read_len.unwrap() / 400.0 * sampling as f64),
+            Some(mrl) => ReadLengthDist::new(mrl / 400.0 * sample_rate as f64),
+            None => ReadLengthDist::new(global_read_len.unwrap() / 400.0 * sample_rate as f64),
         }
     }
     pub fn is_amplicon(&self) -> bool {
