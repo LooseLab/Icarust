@@ -39,6 +39,7 @@ humantime = "2.1.0"
 lazy_static = "1.4.0"
 indicatif = "0.17.5"
 podders = "0.1.2"
+probability = "0.20.3"
 
 
 [build-dependencies]
