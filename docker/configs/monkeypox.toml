@@ -1,4 +1,5 @@
 output_path = "/tmp/"
+pore_type = "R9"
 
 [parameters]
 sample_name = "test"
