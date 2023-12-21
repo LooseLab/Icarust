@@ -14,7 +14,7 @@ sample_rate = 5000
 
 [[sample]]
 name = "Bacteria 1"
-input_genome = "docker/squiggle_arrs/mixed_ref.fa"
+input_genome = "/squiggle_arrs/mixed_ref.fa"
 mean_read_length = 1000
 weight = 1
 

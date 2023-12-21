@@ -25,4 +25,4 @@ LABEL org.opencontainers.image.authors="Rory Munro <rory.munro@nottingham.ac.uk>
 LABEL org.opencontainers.image.version="0.5"
 LABEL org.opencontainers.image.revision="f33760a829d2dd5ef59ac2fa48d0e4955ba15132"
 ENTRYPOINT ["icarust", "-c", "/configs/config.ini"]
-CMD ["-v", "-s", "/configs/config.toml"]
+CMD ["-v", "-s", "/configs/config_dnar9.toml"]

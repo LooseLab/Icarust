@@ -11,6 +11,5 @@ services:
       - "10001:10001"
     volumes:
       - ./configs:/configs
-      - /opt/ont/minknow/conf/rpc-certs:/opt/ont/minknow/conf/rpc-certs
       - ./squiggle_arrs:/squiggle_arrs
       - ./output:/tmp
