@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.69-bookworm AS build
+FROM rust:1.74-bookworm AS build
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 WORKDIR /usr/src/icarust
 RUN apt update &&  apt-get -y install make cmake libprotobuf-dev protobuf-compiler libhdf5-dev libzstd-dev git

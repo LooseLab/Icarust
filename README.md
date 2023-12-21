@@ -44,6 +44,7 @@ Alternatively this can be exported on the command line.
 
 ```bash
 export MINKNOW_TRUSTED_CA="/Path/to/icarust/static/tls_certs/ca.crt"
+readfish --blah
 ```
 
 
@@ -63,9 +64,11 @@ In order to run a simple provided two bacterial sample R9 run:
 cargo run --release -- -s Profile_tomls/config.toml -v
 ```
 
-If no `-v` is passed there will be no logging output!
+> [!TIP]
+> If no `-v` is passed there will be no logging output!
 
-**NB.** The Icarust executable must be run from the cloned directory, or the working directory directory must at least contain the `Icarust/vbz_plugin` folder, and the `Icarust/static` folder.
+
+**NB.** The Icarust executable must be run from the cloned directory, or the working directory directory must at least contain the a copy of `Icarust/vbz_plugin` folder, and the `Icarust/static` folder.
 
 ## Changing Configured settings
 <details>
@@ -75,10 +78,10 @@ The config.ini configures the "sequencer" specific settings for the simulation. 
 
 ```ini
 [TLS]
-cert-dir = /opt/ont/minknow/conf/rpc-certs/
+cert-dir = ./static/tls_certs/
 
 [PORTS]
-manager = 10000
+manager = 9502
 position = 10001
 
 [SEQUENCER]
@@ -104,34 +107,36 @@ The config file is split into a global settings, [Parameters](#parameters) and S
 ### Global fields
 Global fields are applied more as configuration variables that apply throughout the codebase.
 
-![Global Config Section](img/global_Section_toml.png "Global Config section example.")
+![Global Config Section](img/global_example.png "Global Config section example.")
 |          Key |       Type      | Required | Description |
 |:-------------|:---------------:|:-----------:|:--------:|
 | output_path | string | True | The path to a directory that the resulting FAST5 and readfish unblocked_read_ids.txt file will be written to. | 
 | global_mean_read_length | int | False | If set, any samples that do not have their own read length field will use this value.| 
-| random_seed | int  | False | The seed to use in any Random Number generation. If set this makes exeriments repeatable if the value is retained. | 
+| random_seed | int  | False | The seed to use in any Random Number generation. If set this makes experiments repeatable if the value is retained. | 
 | target_yield | int | True | The target total yield of the simulation |
 | working_pore_percent | int | False | Percentage of starting pores that are functional. Default 85% |
 | pore type | string | False | One of "R10" or "R9". Default R9. If R10, the provided input genome is expected to be a FASTQ or FASTA file.
+| nucleotide-type | string | False | One of ["DNA", "RNA"]. If RNA the provided input genome must be a transcriptome FASTA, and the pore_type must be R9.
 
 ### Parameters
 The parameters are applied to the "sequencer". They are used to setup the GRPC server so that it is connectable to. They are also written out in the FAST5 files.
 
-![Parameters Config Section](img/parameters_section_toml.png "Parameters Config section example.")
+![Parameters Config Section](img/params_example.png "Parameters Config section example.")
 |          Key |       Type      | Required | Description |
 |:-------------|:---------------:|:-----------:|:--------:|
 | sample_name | string | True | The sample name for the simulation | 
 | experiment_name | string | True | The experiment name for the simulation| 
 | flowcell_name | string  | True | The flowcell name for the simulation | 
-| experiment_duration | int  | False | The experiment duration in minutes **CURRENTLY UNUSED** | 
 | device_id | string  | True | The device ID - can be anything. | 
 | position | string  | True | Position name. This has to match what readfish is looking for. |
 | break_read_ms | int | False | How many milliseconds to chunk reads into. Default 400. |
+| sample_rate | int | False | Sample rate in Hz. Default [4000]. Suggest 3000 for RNA, 4000 or 5000 for DNA otherwise Dorado will throw a Hissy fit. |
+
 
 ### Sample
-The sample configures what squiggle will be served. This is provided as an array of tables - i.e it is possible to specify more than one sample field. An Array of tables is sepcified by enclosing the section title in [[]].
+The sample configures what squiggle will be served. This is provided as an array of tables - i.e it is possible to specify more than one sample field. An Array of tables is specified by enclosing the section title in [[]].
 
-![Sample Config Section](img/sample_section_toml.png "Sample Config section example.")
+![Sample Config Section](img/sample_example.png "Sample Config section example.")
 |          Key |       Type      | Required | Description |
 |:-------------|:---------------:|:-----------:|:--------:|
 | name | string | True | The sample name. | 
@@ -226,7 +231,7 @@ If this is the first request, a new asynchronous thread is created, which runs i
 The process actions thread loops infinitely, iterating a receiver, which has any received actions sent to it. If actions are found, the thread unlocks the shared ReadInfo Vec, and marks the channel that corresponds to the action according to teh action type.
 
 ### Writing out data.
-The data writeout thread is sent any finished reads (reads that were unblocked or have completed sequencing naturally) via the data generation thread, using message passing with channels. This thread iterates the receiver of each channel in a loop, and once 4000 reads have been accrued these are written into a fast5 file, using the VBZ compression plugin provided by ONT. The fields in the Fast5 file are populated using a mixture of the provided config field values and hardcoded values in the code base.
+The data writeout thread is sent any finished reads (reads that were unblocked or have completed sequencing naturally) via the data generation thread, using message passing with channels. This thread iterates the receiver of each channel in a loop, and once 4000 reads have been accrued these are written into a fast5 or pod5 file, using the VBZ compression plugin provided by ONT. The fields in the Fast5 file are populated using a mixture of the provided config field values and hardcoded values in the code base.
 
 </details>
 

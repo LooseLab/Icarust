@@ -1,4 +1,5 @@
 output_path = "/tmp/"
+global_mean_read_length = 15000
 target_yield = 100000000000
 working_pore_percent = 85
 pore_type = "R10"
