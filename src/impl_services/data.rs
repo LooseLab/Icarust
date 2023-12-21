@@ -429,13 +429,13 @@ fn start_write_out_thread(
                     protocol_run_id: "PRID123".to_string(),
                     protocol_start_time: 1625097600000,
                     sample_id: config.parameters.sample_name.to_string(),
-                    sample_rate: 4000,
+                    sample_rate: config.parameters.get_sample_rate() as u16,
                     sequencing_kit: "Kit X".to_string(),
                     sequencer_position: "bamboo".to_string(),
                     sequencer_position_type: "Gigachad".to_string(),
                     software: "Icarust v1.0".to_string(),
                     system_name: "Of a down".to_string(),
-                    system_type: "System Type A".to_string(),
+                    system_type: "Entrenched Injustice".to_string(),
                     tracking_id: tracking_id
                         .iter()
                         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -875,9 +875,8 @@ fn process_samples_from_config(
         PoreType::R10 => match config.check_dna_or_rna() {
             // R10 DNA
             NucleotideType::DNA => {
-                let kmer_string =
-                    read_to_string("static/dna_r10.4.1_e8.2_400bps/9mer_levels_v1.txt")
-                        .expect("Failed to read kmers to string");
+                let kmer_string = read_to_string("static/dna_r10.4.1_e8.2_400bps/R10_model.tsv")
+                    .expect("Failed to read kmers to string");
                 let (_, kmer_hashmap) = simulation::parse_kmers(&kmer_string, KmerType::NineMer)
                     .expect("Failed to parse R10 kmers");
                 Some(kmer_hashmap)
