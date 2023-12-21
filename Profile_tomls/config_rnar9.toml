@@ -1,7 +1,8 @@
 output_path = "/tmp/"
 target_yield = 100000000000
 working_pore_percent = 85
-model_type = "RNAR9"
+pore_type = "R9"
+nucleotide_type = "RNA"
 
 [parameters]
 sample_name = "wtc11"
@@ -10,7 +11,7 @@ flowcell_name = "FAQ1234"
 experiment_duration_set = 4800
 device_id = "Mechamaru"
 position = "Kyoto"
-sampling = 3000
+sample_rate = 3000
 
 [[sample]]
 name = "Human"

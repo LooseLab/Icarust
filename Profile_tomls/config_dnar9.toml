@@ -1,7 +1,7 @@
 output_path = "/tmp/"
 target_yield = 100000000000
-working_pore_percent = 85
-model_type = "DNAR9"
+pore_type = "R9"
+nucleotide_type = "DNA"
 
 [parameters]
 sample_name = "test"
