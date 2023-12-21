@@ -12,7 +12,7 @@ Figure 1 - Accurate depiction of a man learning Rust ☠️
 Alternatively we offer a Docker container, which can be found at https://www.github.com/looselab/icarust_docker. 
 This negates the need for any manual building, dependency management and is simple(er) to use.
 #### Caveats
-MacOS runs docker volumes through virtualisation, rather than on the underlying OS. This results in very slow read/write for directories shared bewteen the host computer and the container. Whilst it is possible to run Icarust using docker on Mac, it may be better to run "natively", following the instructions below.
+MacOS runs docker volumes through virtualisation, rather than on the underlying OS. This results in very slow read/write for directories shared between the host computer and the container. Whilst it is possible to run Icarust using docker on Mac, it may be better to run "natively", following the instructions below.
 
 ## Quick start for developers
 #### Dependencies
@@ -143,7 +143,7 @@ The sample configures what squiggle will be served. This is provided as an array
 | input_genome | string | True | Path to **either** the squiggle array or a directory of squiggle arrays. If a directory, all squiggle files will be considered as possible sources of reads for this sample. If the `pore_type` is **R10** files must be FASTA. | 
 | mean_read_length | float  | False | The mean read length for the distribution of this sample. | 
 | weight | int  | True | The relative weight of this sample against any other sample. | 
-| weights_files | array[string]  | False | An array of paths to [distribution.json](#distributions) files, if you wish to specify relative likelihood of drawing a read from a given squiggle file. If a directory of files is passedm the number of weights files must equal the number of files in the directory. | 
+| weights_files | array[string]  | False | An array of paths to [distribution.json](#distributions) files, if you wish to specify relative likelihood of drawing a read from a given squiggle file. If a directory of files is passed the number of weights files must equal the number of files in the directory. | 
 | amplicon | bool | False | Is the sample from a PCR amplicon based run. Means that read squiggle is always the complete length of a squiggle file. |
 | barcodes | array[string] | False | Array of Barcode names. Multiple Barcodes can be provided for one sample |
 | barcode_Weights | array[string] | False | The relative distribution of barcodes. If not provided any barcodes will be assigned a random likelihood. If provided must same length as the barcodes array.|
@@ -177,13 +177,13 @@ cd python
 conda env create -f icarust.yaml
 ```
 
-To then generate signal to be served, use the provided script, giving any reference files you wish to use as arguments, space seperated. An example -
+To then generate signal to be served, use the provided script, giving any reference files you wish to use as arguments, space separated. An example -
 
 ```zsh
 python make_squiggle.py reference_1.fa reference_2.fa --out_dir /path/to/desired/output/squiggle
 ```
 
-### Splittling the reference into multiple squiggle arrays with a bed file
+### Splitting the reference into multiple squiggle arrays with a bed file
 It is possible to split a reference into multiple squiggle arrays - i.e to simulate a PCR run by providing a bed file. This is only possible using one reference at a time currently.
 ```zsh
 python make_squiggle.py reference_1.fa --bed_file /path/to/regions.bed --out_dir /path/to/desired/output/squiggle
@@ -221,11 +221,11 @@ Every 400ms it unlocks a shared Vec(If from a python background think a List tha
 
 Barcode squiggle can be appended to the randomly selected read by specifying desired barcodes in the config TOML. The chance of choosing a barcode within a sample is also specified in the Config TOML.
 
-This Vec is shared between the Tonic end point and the Data generation thread using a ARC (atomic reference counter) and a mutex for mutual exclusion. This allows either thread to get a lock on the vec whilst it is being read and modfified. 
+This Vec is shared between the Tonic end point and the Data generation thread using a ARC (atomic reference counter) and a mutex for mutual exclusion. This allows either thread to get a lock on the vec whilst it is being read and modified. 
 
 ### Serving reads
 When a GetLiveReadsRequest GRPC request comes in, any actions specified in that request are sent to the process actions thread.
-If this is the first request, a new asynchronous thread is created, which runs in perpetuity. The thread gets a lock on the channels Vec. It loops through each ReadInfo and checks if the channel is marked as Stop receving or was unblocked. If not, the amount of squiggle is worked out based on how much time in milliseconds has passed since that read was last served. If there is enough a new HashMap (Python Dictionary, Javascript Map/Object) is created and the information and squiggle to return is added to this. Once every channel is checked, if there is data to serve, the HashMap is passed via a channel back to the main GRPC server runtime, where it is split up into 24 read chunks. These are then sent via the bi-directional stream back to the client (Presumably readfish).
+If this is the first request, a new asynchronous thread is created, which runs in perpetuity. The thread gets a lock on the channels Vec. It loops through each ReadInfo and checks if the channel is marked as Stop receiving or was unblocked. If not, the amount of squiggle is worked out based on how much time in milliseconds has passed since that read was last served. If there is enough a new HashMap (Python Dictionary, Javascript Map/Object) is created and the information and squiggle to return is added to this. Once every channel is checked, if there is data to serve, the HashMap is passed via a channel back to the main GRPC server runtime, where it is split up into 24 read chunks. These are then sent via the bi-directional stream back to the client (Presumably readfish).
 
 ### Processing actions.
 The process actions thread loops infinitely, iterating a receiver, which has any received actions sent to it. If actions are found, the thread unlocks the shared ReadInfo Vec, and marks the channel that corresponds to the action according to teh action type.
