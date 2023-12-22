@@ -46,7 +46,6 @@ use tonic::{Request, Response, Status};
 use uuid::Uuid;
 
 use crate::cli::Cli;
-use crate::r10_simulation as r10_sim;
 use crate::reacquisition_distribution::{ReacquisitionPoisson, SampleDist};
 use crate::read_length_distribution::ReadLengthDist;
 use crate::services::minknow_api::data::data_service_server::DataService;
@@ -57,7 +56,9 @@ use crate::services::minknow_api::data::{
     get_live_reads_request, get_live_reads_response, GetDataTypesRequest, GetDataTypesResponse,
     GetLiveReadsRequest, GetLiveReadsResponse,
 };
+use crate::simulation::{KmerType, SimType};
 use crate::PoreType;
+use crate::{simulation, NucleotideType};
 use crate::{Config, Sample, _load_toml};
 
 /// unused
@@ -120,6 +121,7 @@ struct SampleInfo {
     file_weights: Vec<WeightedIndex<usize>>,
     /// We use this to determine whether we are reading signal ot Sequence from the file info (R10 -> Sequence)
     pore_type: PoreType,
+    nucleotide_type: NucleotideType,
 }
 impl fmt::Debug for SampleInfo {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -154,6 +156,7 @@ impl SampleInfo {
         is_barcoded: bool,
         read_len_dist: ReadLengthDist,
         pore_type: PoreType,
+        nucleotide_type: NucleotideType,
     ) -> SampleInfo {
         SampleInfo {
             name,
@@ -166,6 +169,7 @@ impl SampleInfo {
             is_barcoded,
             file_weights: vec![],
             pore_type,
+            nucleotide_type,
         }
     }
 }
@@ -189,6 +193,7 @@ pub struct DataServiceServicer {
     setup: Arc<Mutex<RunSetup>>,
     break_chunks_ms: u64,
     channel_size: usize,
+    sampling: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -289,14 +294,15 @@ fn create_barcode_squig_hashmap(config: &Config) -> HashMap<String, (Vec<i16>, V
 }
 
 /// Read in the 1st and second squiggle for a given barcode.
-/// setting R10 as the poretype appends_R10 and fetches R10 data
+/// setting R10 as the poretype appends_R10 and fetches R10 data,
+/// PoreType R9 appends "_R9".
 fn get_barcode_squiggle(
     barcode: &String,
     pore_type: PoreType,
 ) -> Result<(Vec<i16>, Vec<i16>), ReadNpyError> {
     let r10_suffix = match pore_type {
         PoreType::R10 => "_R10",
-        PoreType::R9 => "",
+        PoreType::R9 => "_R9",
     };
     info!(
         "Fetching barcode squiggle for barcode {} at {}",
@@ -423,13 +429,13 @@ fn start_write_out_thread(
                     protocol_run_id: "PRID123".to_string(),
                     protocol_start_time: 1625097600000,
                     sample_id: config.parameters.sample_name.to_string(),
-                    sample_rate: 4000,
+                    sample_rate: config.parameters.get_sample_rate() as u16,
                     sequencing_kit: "Kit X".to_string(),
                     sequencer_position: "bamboo".to_string(),
                     sequencer_position_type: "Gigachad".to_string(),
                     software: "Icarust v1.0".to_string(),
                     system_name: "Of a down".to_string(),
-                    system_type: "System Type A".to_string(),
+                    system_type: "Entrenched Injustice".to_string(),
                     tracking_id: tracking_id
                         .iter()
                         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -478,10 +484,14 @@ fn start_write_out_thread(
                         let unblock_time = to_write_info.time_unblocked;
                         let prev_time = to_write_info.start_time_utc;
                         let elapsed_time = unblock_time.time() - prev_time.time();
-                        let stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
+                        let stop = convert_milliseconds_to_samples(
+                            elapsed_time.num_milliseconds(),
+                            config.parameters.get_sample_rate(),
+                        );
                         new_end = min(stop, to_write_info.read.len());
                     }
                     let signal = to_write_info.read[0..new_end].to_vec();
+
                     let num_samples = signal.len() as u64;
                     debug!("{to_write_info:#?}");
                     if signal.is_empty() {
@@ -510,10 +520,10 @@ fn start_write_out_thread(
                         ),
                     ]);
                     let channel_info = ChannelInfo::new(
-                        8192_f64,
-                        6.0,
-                        1500.0,
-                        4000.0,
+                        2048_f64,
+                        0.0,
+                        200.0,
+                        config.parameters.get_sample_rate() as f64,
                         to_write_info.channel_number.clone(),
                     );
                     match out_file {
@@ -768,6 +778,7 @@ fn stop_sending_read(
 pub trait FileExtension {
     fn has_extension<S: AsRef<str>>(&self, extensions: &[S]) -> bool;
     fn is_fasta(&self) -> bool;
+    fn is_npy(&self) -> bool;
 }
 
 impl<P: AsRef<Path>> FileExtension for P {
@@ -808,10 +819,46 @@ impl<P: AsRef<Path>> FileExtension for P {
             ".fq.gz",
         ]);
     }
+
+    fn is_npy(&self) -> bool {
+        info!("{:#?}", &self.as_ref());
+        return self.as_ref().has_extension(&[".npy"]);
+    }
 }
 
+/// Check if a sample has provided weights, otherwise create a random distribution of sample weights
+fn get_or_create_sample_weighted_distribution(
+    sample: &Sample,
+    sample_info: &mut SampleInfo,
+    rng: &mut StdRng,
+) {
+    let distributions: Vec<WeightedIndex<usize>> = match sample.weights_files {
+        Some(_) => read_sample_distribution_files(sample),
+        // generate amplicon distributions for each barcode
+        None => {
+            let num_contigs = simulation::num_sequences(sample.input_genome.clone());
+            let read_lengths = simulation::sequence_lengths(sample.input_genome.clone());
+            let mut file_distributions = vec![];
+            // If we have barcodes
+            if let Some(barcodes) = &sample.barcodes {
+                for _barcode in barcodes.iter() {
+                    let disty =
+                        generate_file_sampling_distribution(num_contigs, rng, Some(&read_lengths));
+                    file_distributions.push(disty);
+                }
+            } else {
+                let disty =
+                    generate_file_sampling_distribution(num_contigs, rng, Some(&read_lengths));
+                file_distributions.push(disty)
+            }
+            file_distributions
+        }
+    };
+    sample_info.file_weights = distributions;
+}
 /// Read the config file and parse the sample fields. This then returns any necessary Sample infos, setup
 /// according to the structure of the run. This structure changes based on whether the sample is barcoded, amplicons based and has provided weights.
+/// This is way too complex and should be rewritten!
 fn process_samples_from_config(
     config: &Config,
 ) -> (HashMap<String, SampleInfo>, WeightedIndex<usize>) {
@@ -822,16 +869,32 @@ fn process_samples_from_config(
     let sample_weights = read_sample_distribution(config);
     // Seeded rng for generated weighted dists
     let mut rng: rand::rngs::StdRng = rand::SeedableRng::seed_from_u64(config.get_rand_seed());
-    let kmer_string =
-        read_to_string("static/R10_model.tsv").expect("Failed to read kmers to string");
+
+    // Select simulation type
     let kmers = match config.check_pore_type() {
-        PoreType::R10 => {
-            let (_, kmer_hashmap) =
-                r10_sim::parse_kmers(&kmer_string).expect("Failed to parse R10 kmers");
-            Some(kmer_hashmap)
-        }
-        PoreType::R9 => None,
+        PoreType::R10 => match config.check_dna_or_rna() {
+            // R10 DNA
+            NucleotideType::DNA => {
+                let kmer_string = read_to_string("static/dna_r10.4.1_e8.2_400bps/R10_model.tsv")
+                    .expect("Failed to read kmers to string");
+                let (_, kmer_hashmap) = simulation::parse_kmers(&kmer_string, KmerType::NineMer)
+                    .expect("Failed to parse R10 kmers");
+                Some(kmer_hashmap)
+            }
+            _ => panic!("RNA cannot have a pore type of R10"),
+        },
+        PoreType::R9 => match config.check_dna_or_rna() {
+            NucleotideType::DNA => None,
+            NucleotideType::RNA => {
+                let kmer_string = read_to_string("static/rna_r9.4_180mv_70bps/5mer_levels_v1.txt")
+                    .expect("Failed to read kmers to string");
+                let (_, kmer_hashmap) = simulation::parse_kmers(&kmer_string, KmerType::FiveMer)
+                    .expect("Failed to parse R10 kmers");
+                Some(kmer_hashmap)
+            }
+        },
     };
+
     // Now iterate all the samples and setup any required fields for the type of run wie have. Possible combos:
     //      Amplicon barcoded
     //      Amplicon unbarcoded
@@ -849,13 +912,14 @@ fn process_samples_from_config(
             t.sort_by_key(|a| a.path());
             for entry in t {
                 // only read files that are .npy squiggle
-                if entry.path().extension().unwrap().to_str().unwrap() == "npy" {
+                if entry.path().is_npy() {
                     info!("Reading view for{:#?}", entry.path());
                     read_views_of_squiggle_data(
                         &mut views,
                         &entry.path().clone(),
                         config.global_mean_read_length,
                         sample,
+                        config.parameters.get_sample_rate(),
                     );
                 } else if entry.path().is_fasta() {
                     info!("Reading view of sequence for {:#?}", entry.path());
@@ -865,6 +929,9 @@ fn process_samples_from_config(
                         config.global_mean_read_length,
                         sample,
                         kmers.as_ref().unwrap(),
+                        config.parameters.get_sample_rate(),
+                        config.check_pore_type(),
+                        config.check_dna_or_rna(),
                     );
                 }
             }
@@ -875,9 +942,14 @@ fn process_samples_from_config(
                 Some(_) => read_sample_distribution_files(sample),
                 // generate amplicon distributions for each barcode
                 None => {
-                    let num_contigs = match config.check_pore_type() {
-                        PoreType::R10 => r10_sim::num_sequences(sample.input_genome.clone()),
-                        PoreType::R9 => sample_info.files.len(),
+                    let num_contigs = match config.check_dna_or_rna() {
+                        NucleotideType::DNA => match config.check_pore_type() {
+                            PoreType::R9 => sample_info.files.len(),
+                            PoreType::R10 => simulation::num_sequences(sample.input_genome.clone()),
+                        },
+                        NucleotideType::RNA => {
+                            simulation::num_sequences(sample.input_genome.clone())
+                        }
                     };
                     let mut file_distributions = vec![];
                     // If we have barcodes
@@ -916,53 +988,40 @@ fn process_samples_from_config(
                     config.global_mean_read_length,
                     sample,
                     kmers.as_ref().unwrap(),
+                    config.parameters.get_sample_rate(),
+                    config.check_pore_type(),
+                    config.check_dna_or_rna(),
                 );
-            } else {
+            } else if sample.input_genome.is_npy() {
                 read_views_of_squiggle_data(
                     &mut views,
                     &sample.input_genome.clone(),
                     config.global_mean_read_length,
                     sample,
+                    config.parameters.get_sample_rate(),
                 );
+            } else {
+                debug!("Sorry unsupported format!");
             }
+
             let sample_info = views.get_mut(&sample.name).unwrap();
-            match config.check_pore_type() {
-                PoreType::R9 => {
-                    // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
-                    // so we only ever see this file when we generate a read
-                    sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()];
-                }
-                PoreType::R10 => {
-                    let distributions: Vec<WeightedIndex<usize>> = match &sample.weights_files {
-                        Some(_) => read_sample_distribution_files(sample),
-                        // generate amplicon distributions for each barcode
-                        None => {
-                            let num_contigs = r10_sim::num_sequences(sample.input_genome.clone());
-                            let read_lengths =
-                                r10_sim::sequence_lengths(sample.input_genome.clone());
-                            let mut file_distributions = vec![];
-                            // If we have barcodes
-                            if let Some(barcodes) = &sample.barcodes {
-                                for _barcode in barcodes.iter() {
-                                    let disty = generate_file_sampling_distribution(
-                                        num_contigs,
-                                        &mut rng,
-                                        Some(&read_lengths),
-                                    );
-                                    file_distributions.push(disty);
-                                }
-                            } else {
-                                let disty = generate_file_sampling_distribution(
-                                    num_contigs,
-                                    &mut rng,
-                                    Some(&read_lengths),
-                                );
-                                file_distributions.push(disty)
-                            }
-                            file_distributions
+            match config.check_dna_or_rna() {
+                NucleotideType::DNA => {
+                    match config.check_pore_type() {
+                        // we will still "sample" randomly from files but will only add 1 - resulting in 0 always being sampled - as the possible sample to be drawn
+                        // so we only ever see this file when we generate a read
+                        PoreType::R9 => {
+                            sample_info.file_weights = vec![WeightedIndex::new(&vec![1]).unwrap()]
                         }
-                    };
-                    sample_info.file_weights = distributions;
+                        PoreType::R10 => get_or_create_sample_weighted_distribution(
+                            sample,
+                            sample_info,
+                            &mut rng,
+                        ),
+                    }
+                }
+                NucleotideType::RNA => {
+                    get_or_create_sample_weighted_distribution(sample, sample_info, &mut rng)
                 }
             }
             // Time for barcoding shenanigans
@@ -1050,7 +1109,10 @@ fn read_views_of_sequence_data(
     file_path: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
-    kmers: &HashMap<String, f64, std::hash::BuildHasherDefault<fnv::FnvHasher>>,
+    kmers: &HashMap<String, (f64, Option<f64>), std::hash::BuildHasherDefault<fnv::FnvHasher>>,
+    sample_rate: u64,
+    pore_type: PoreType,
+    nucleotide_type: NucleotideType,
 ) {
     info!(
         "Reading sequence information for {:#?} for sample {:#?} MAY TAKE SOME TIME",
@@ -1058,8 +1120,15 @@ fn read_views_of_sequence_data(
         sample_info
     );
     // lazy but cba to pass through
-    let profile = r10_sim::get_sim_profile(r10_sim::SimType::R10);
-    let num_seq = r10_sim::num_sequences(file_path);
+    let sim_type = match (nucleotide_type, pore_type) {
+        (NucleotideType::DNA, PoreType::R10) => SimType::DNAR10,
+        (NucleotideType::RNA, PoreType::R9) => SimType::RNAR9,
+        _ => {
+            panic!("We shouldn't be readig sequence for R10 RNA or R9DNA");
+        }
+    };
+    let profile = simulation::get_sim_profile(sim_type);
+    let num_seq = simulation::num_sequences(file_path);
     info!("Simulating for {num_seq} sequences");
     let mut reader: Box<dyn FastxReader> =
         parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
@@ -1072,10 +1141,10 @@ fn read_views_of_sequence_data(
             "Converting {}",
             String::from_utf8(fasta_record.id().to_vec()).unwrap()
         );
-        let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
+        let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length, sample_rate);
         let file_info = FileInfo::new(
             None,
-            Some(r10_sim::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
+            Some(simulation::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
         );
         let sample = views
             .entry(sample_info.name.clone())
@@ -1086,7 +1155,8 @@ fn read_views_of_sequence_data(
                 sample_info.is_amplicon(),
                 sample_info.is_barcoded(),
                 read_length_dist,
-                PoreType::R10,
+                pore_type,
+                nucleotide_type,
             ));
         sample.files.push(file_info);
         done += 1;
@@ -1108,6 +1178,7 @@ fn read_views_of_squiggle_data(
     file_info: &std::path::PathBuf,
     global_mean_read_length: Option<f64>,
     sample_info: &Sample,
+    sampling: u64,
 ) {
     info!(
         "Reading squiggle information for {:#?} for sample {:#?}",
@@ -1118,8 +1189,8 @@ fn read_views_of_squiggle_data(
     let mmap = unsafe { Mmap::map(&file).unwrap() };
     let view: ArrayBase<ViewRepr<&i16>, Dim<[usize; 1]>> =
         ArrayView1::<i16>::view_npy(&mmap).unwrap();
-    let size = view.shape()[0];
-    let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length);
+    // let size = view.shape()[0];
+    let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length, sampling);
     let file_info = FileInfo::new(Some(view.to_owned()), None);
     let sample = views
         .entry(sample_info.name.clone())
@@ -1131,14 +1202,15 @@ fn read_views_of_squiggle_data(
             sample_info.is_barcoded(),
             read_length_dist,
             PoreType::R9,
+            NucleotideType::DNA,
         ));
     sample.files.push(file_info)
 }
 
 /// Convert an elapased period of time in milliseconds tinto samples
 
-fn convert_milliseconds_to_samples(milliseconds: i64) -> usize {
-    (milliseconds * 4) as usize
+fn convert_milliseconds_to_samples(milliseconds: i64, sampling: u64) -> usize {
+    (milliseconds as f64 * (sampling / 1000) as f64) as usize
 }
 
 ///
@@ -1204,6 +1276,7 @@ fn generate_read(
     read_number: &mut u32,
     start_time: &u64,
     barcode_squig: &HashMap<String, (Vec<i16>, Vec<i16>)>,
+    sampling: u64,
 ) {
     // set stop receieivng to false so we don't accidentally not send the read
     value.stop_receiving = false;
@@ -1213,8 +1286,8 @@ fn generate_read(
     value.end_reason = 1;
     // we want to write this out at the end
     value.write_out = true;
-    // read start time in samples (seconds since start of experiment * 4000)
-    value.start_time = (Utc::now().timestamp() as u64 - start_time) * 4000_u64;
+    // read start time in samples (seconds since start of experiment * sampling)
+    value.start_time = (Utc::now().timestamp() as u64 - start_time) * sampling;
     value.start_time_seconds = (Utc::now().timestamp() as u64 - start_time) as usize;
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
@@ -1249,6 +1322,7 @@ fn generate_read(
                 .sample(rng),
         )
         .unwrap();
+
     // earliest possible start point in file, match is for amplicons so we don't start halfway through
     let start: usize = match sample_info.is_amplicon {
         true => 0,
@@ -1259,13 +1333,14 @@ fn generate_read(
     let read_length: usize = read_distribution.sample(rng) as usize;
     // don;t over slice our read
     let end: usize = cmp::min(start + read_length, file_info.contig_len - 1);
+    // let end = file_info.contig_len - 1;
     let (mut barcode_1_squig, mut barcode_2_squig) = (vec![], vec![]);
     // Barcode name has been provided for this sample
     if sample_info.is_barcoded {
         (barcode_1_squig, barcode_2_squig) = barcode_squig.get(barcode.unwrap()).unwrap().clone();
     }
-    let mut squiggle = match sample_info.pore_type {
-        PoreType::R9 => {
+    let mut squiggle = match (&sample_info.nucleotide_type, &sample_info.pore_type) {
+        (NucleotideType::DNA, PoreType::R9) => {
             let mut read_squig = file_info
                 .view
                 .as_ref()
@@ -1279,9 +1354,9 @@ fn generate_read(
             }
             read_squig
         }
-        PoreType::R10 => {
+        (NucleotideType::DNA, PoreType::R10) | (NucleotideType::RNA, PoreType::R9) => {
             // generate a prefix
-            let mut prefix = r10_sim::generate_prefix().expect("NO PREFIX BAD");
+            let mut prefix = simulation::generate_prefix().expect("NO PREFIX BAD");
             //  read the signal here
             let mut read_squig = file_info
                 .sequence
@@ -1297,13 +1372,17 @@ fn generate_read(
             }
             prefix.extend(read_squig);
             prefix
+            // read_squig
+        }
+        _ => {
+            panic!("Invalid combination of pore type and nucleotide type");
         }
     };
 
     // slice the view to get our full read
     value.read.append(&mut squiggle);
     // set estimated duration in seconds
-    value.duration = value.read.len() / 4000;
+    value.duration = value.read.len() / sampling as usize;
     // set the read len for channel death chance
     value.last_read_len = value.read.len() as u64;
     let read_id = Uuid::new_v4().to_string();
@@ -1327,6 +1406,7 @@ impl DataServiceServicer {
 
         let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
+        let sampling: u64 = config.parameters.get_sample_rate();
         let start_time: u64 = Utc::now().timestamp() as u64;
         let barcode_squig = create_barcode_squig_hashmap(&config);
         info!("Barcodes available {:#?}", barcode_squig.keys());
@@ -1450,6 +1530,7 @@ impl DataServiceServicer {
                                 &mut read_number,
                                 &start_time,
                                 &barcode_squig,
+                                sampling,
                             )
                         }
                     }
@@ -1480,6 +1561,7 @@ impl DataServiceServicer {
             setup: is_safe_setup,
             break_chunks_ms,
             channel_size,
+            sampling,
         }
     }
 }
@@ -1503,7 +1585,8 @@ impl DataService for DataServiceServicer {
         let channel_size = self.channel_size;
         let mut stream_counter = 1;
         let break_chunk_ms = self.break_chunks_ms;
-        let chunk_size = break_chunk_ms as f64 / 1000.0 * 4000.0;
+        let sampling = self.sampling;
+        let chunk_size = break_chunk_ms as f64 / 1000.0 * sampling as f64;
 
         // Stream the responses back
         let output = async_stream::try_stream! {
@@ -1559,7 +1642,7 @@ impl DataService for DataServiceServicer {
                                 let read_start_time = read_info.start_time_utc;
                                 let elapsed_time = now_time.time() - read_start_time.time();
                                 // How far through the read we are in total samples
-                                let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds());
+                                let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
                                 // slice of signal is too short
                                 if start > stop || (stop - start) < chunk_size as usize {
                                     continue

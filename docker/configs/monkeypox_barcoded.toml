@@ -1,5 +1,6 @@
 output_path = "/tmp/"
 random_seed = 10
+pore_type = "R9"
 
 [parameters]
 sample_name = "test"

@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM rust:1.69-bookworm AS build
+FROM rust:1.74-bookworm AS build
 ENV CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
 WORKDIR /usr/src/icarust
 RUN apt update &&  apt-get -y install make cmake libprotobuf-dev protobuf-compiler libhdf5-dev libzstd-dev git
@@ -22,7 +22,7 @@ USER 1000:1000
 LABEL org.opencontainers.image.created="11/05/23"
 LABEL org.opencontainers.image.source="https://github.com/looselab/Icarust/"
 LABEL org.opencontainers.image.authors="Rory Munro <rory.munro@nottingham.ac.uk>"
-LABEL org.opencontainers.image.version="0.2"
+LABEL org.opencontainers.image.version="0.5"
 LABEL org.opencontainers.image.revision="f33760a829d2dd5ef59ac2fa48d0e4955ba15132"
 ENTRYPOINT ["icarust", "-c", "/configs/config.ini"]
-CMD ["-v", "-s", "/configs/config.toml"]
+CMD ["-v", "-s", "/configs/config_dnar9.toml"]

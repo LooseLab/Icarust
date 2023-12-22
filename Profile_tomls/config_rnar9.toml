@@ -1,0 +1,22 @@
+output_path = "/tmp/"
+target_yield = 100000000000
+working_pore_percent = 85
+pore_type = "R9"
+nucleotide_type = "RNA"
+
+[parameters]
+sample_name = "wtc11"
+experiment_name = "wtc11_transcript"
+flowcell_name = "FAQ1234"
+experiment_duration_set = 4800
+device_id = "Mechamaru"
+position = "Kyoto"
+sample_rate = 3000
+
+[[sample]]
+name = "Human"
+input_genome = "docker/squiggle_arrs/gencode.v44.transcripts.wtc11.fa"
+mean_read_length = 1300
+weight = 1
+weights_files = ["docker/squiggle_arrs/gencode.v44.transcripts.wtc11.dist.json"]
+amplicon = true
