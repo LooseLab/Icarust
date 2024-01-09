@@ -346,6 +346,7 @@ fn start_write_out_thread(
         let exp_start_time = Utc::now();
         let iso_time = exp_start_time.to_rfc3339_opts(SecondsFormat::Millis, false);
         let config = _load_toml(&x.simulation_profile);
+        let sample_rate = config.parameters.get_sample_rate().to_string();
         let ic_pt = config.check_pore_type();
         let experiment_duration = config.get_experiment_duration_set().to_string();
         // std::env::set_var("HDF5_PLUGIN_PATH", "./vbz_plugin".resolve().as_os_str());
@@ -356,8 +357,8 @@ fn start_write_out_thread(
             ("local_basecalling", "0"),
             ("package", "bream4"),
             ("package_version", "6.3.5"),
-            ("sample_frequency", "4000"),
-            ("sequencing_kit", "sqk-lsk109"),
+            ("sample_frequency", &sample_rate),
+            ("sequencing_kit", "sqk-lsk114"),
         ]);
         let tracking_id = HashMap::from([
             ("asic_id", "817405089"),
@@ -382,7 +383,7 @@ fn start_write_out_thread(
             ("exp_script_purpose", "sequencing_run"),
             ("exp_start_time", iso_time.as_str()),
             ("flow_cell_id", config.parameters.flowcell_name.as_str()),
-            ("flow_cell_product_code", "FLO-MIN106"),
+            ("flow_cell_product_code", "FLO-MIN114"),
             ("guppy_version", "5.0.17+99baa5b"),
             ("heatsink_temp", "34.066406"),
             ("host_product_code", "GRD-X5B003"),
@@ -424,13 +425,13 @@ fn start_write_out_thread(
                         .collect(),
                     experiment_name: "Experiment 1".to_string(),
                     flow_cell_id: config.parameters.flowcell_name.to_string(),
-                    flow_cell_product_code: "PC123".to_string(),
+                    flow_cell_product_code: "FLO-MIN114".to_string(),
                     protocol_name: "Protocol 1".to_string(),
                     protocol_run_id: "PRID123".to_string(),
                     protocol_start_time: 1625097600000,
                     sample_id: config.parameters.sample_name.to_string(),
                     sample_rate: config.parameters.get_sample_rate() as u16,
-                    sequencing_kit: "Kit X".to_string(),
+                    sequencing_kit: "sqk-lsk114".to_string(),
                     sequencer_position: "bamboo".to_string(),
                     sequencer_position_type: "Gigachad".to_string(),
                     software: "Icarust v1.0".to_string(),
