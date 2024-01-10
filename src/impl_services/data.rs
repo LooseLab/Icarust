@@ -450,7 +450,6 @@ fn start_write_out_thread(
             }
             let z = { *write_out_gracefully.lock().unwrap() };
 
-            // this isn't perfect. if we are finsihing up a run and have more than 4000 reads waiting to be written out, we will lose the excess reads over 4000
             if read_infos.len() >= 4000 || z {
                 let extension = if x.pod5 { ".pod5" } else { ".fast5" };
                 let output_file_name = format!(
@@ -478,6 +477,7 @@ fn start_write_out_thread(
                 for to_write_info in read_infos.drain(..range_end) {
                     // skip this read if we are trying to write it out twice
                     if !read_numbers_seen.insert(to_write_info.read_id.clone()) {
+                        warn!("Read seen twice?");
                         continue;
                     }
                     let mut new_end = to_write_info.read.len();
@@ -499,36 +499,37 @@ fn start_write_out_thread(
                         error!("Attempt to write empty signal");
                         continue;
                     };
-                    let raw_attrs: HashMap<&str, RawAttrsOpts> = HashMap::from([
-                        ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
-                        (
-                            "end_reason",
-                            RawAttrsOpts::EndReason(to_write_info.end_reason),
-                        ),
-                        ("median_before", RawAttrsOpts::MedianBefore(100.0)),
-                        (
-                            "read_id",
-                            RawAttrsOpts::ReadId(to_write_info.read_id.as_str()),
-                        ),
-                        (
-                            "read_number",
-                            RawAttrsOpts::ReadNumber(to_write_info.read_number as i32),
-                        ),
-                        ("start_mux", RawAttrsOpts::StartMux(to_write_info.start_mux)),
-                        (
-                            "start_time",
-                            RawAttrsOpts::StartTime(to_write_info.start_time),
-                        ),
-                    ]);
-                    let channel_info = ChannelInfo::new(
-                        2048_f64,
-                        0.0,
-                        200.0,
-                        config.parameters.get_sample_rate() as f64,
-                        to_write_info.channel_number.clone(),
-                    );
+
                     match out_file {
                         OutputFileType::Fast5(ref mut multi) => {
+                            let raw_attrs: HashMap<&str, RawAttrsOpts> = HashMap::from([
+                                ("duration", RawAttrsOpts::Duration(signal.len() as u32)),
+                                (
+                                    "end_reason",
+                                    RawAttrsOpts::EndReason(to_write_info.end_reason),
+                                ),
+                                ("median_before", RawAttrsOpts::MedianBefore(100.0)),
+                                (
+                                    "read_id",
+                                    RawAttrsOpts::ReadId(to_write_info.read_id.as_str()),
+                                ),
+                                (
+                                    "read_number",
+                                    RawAttrsOpts::ReadNumber(to_write_info.read_number as i32),
+                                ),
+                                ("start_mux", RawAttrsOpts::StartMux(to_write_info.start_mux)),
+                                (
+                                    "start_time",
+                                    RawAttrsOpts::StartTime(to_write_info.start_time),
+                                ),
+                            ]);
+                            let channel_info = ChannelInfo::new(
+                                2048_f64,
+                                0.0,
+                                200.0,
+                                config.parameters.get_sample_rate() as f64,
+                                to_write_info.channel_number.clone(),
+                            );
                             multi
                                 .create_empty_read(
                                     to_write_info.read_id.clone(),
