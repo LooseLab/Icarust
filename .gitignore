@@ -10,3 +10,6 @@ basecall_test.py
 *tls/*
 /docker/*/hg38_no_alts.fa
 /docker/output/*
+*.tensor
+*.bam
+*config.toml
