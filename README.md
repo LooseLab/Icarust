@@ -26,7 +26,7 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y protobuf-compiler libprotobuf-dev
 ```
 
-#### TLS
+#### TLS - READ IF RUNNING WITH READFISH!
 
 Minknow core 5.x requires a secure channel connection be made by the minknow API. IN order to do this, any programs connecting to Icarusts facsimile of the MinKNOW RPC will need to set the following environment variables:
 ```python
