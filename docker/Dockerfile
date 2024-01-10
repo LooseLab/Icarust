@@ -19,10 +19,10 @@ COPY --from=build /usr/src/icarust/static /static
 EXPOSE 10000
 EXPOSE 10001
 USER 1000:1000
-LABEL org.opencontainers.image.created="11/05/23"
+LABEL org.opencontainers.image.created="10/01/23"
 LABEL org.opencontainers.image.source="https://github.com/looselab/Icarust/"
 LABEL org.opencontainers.image.authors="Rory Munro <rory.munro@nottingham.ac.uk>"
-LABEL org.opencontainers.image.version="0.5"
-LABEL org.opencontainers.image.revision="f33760a829d2dd5ef59ac2fa48d0e4955ba15132"
+LABEL org.opencontainers.image.version="0.6"
+LABEL org.opencontainers.image.revision="91674bdaa45b45c72de59ad8c8c04b79466304ef"
 ENTRYPOINT ["icarust", "-c", "/configs/config.ini"]
-CMD ["-v", "-s", "/configs/config_dnar10.toml"]
+CMD ["-v", "-s", "/configs/config_dnar10_5khz.toml"]
