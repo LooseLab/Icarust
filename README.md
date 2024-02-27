@@ -17,13 +17,15 @@ MacOS runs docker volumes through virtualisation, rather than on the underlying 
 ## Quick start for developers
 #### Dependencies
 
-In order to build `tonic` >= 0.8.0, you need the `protoc` Protocol Buffers compiler, along with Protocol Buffers resource files.
+In order to build `tonic` >= 0.8.0, you need the `protoc` Protocol Buffers compiler, along with Protocol Buffers resource files. `libhdf5` is required for FAST5 support.
+
+The `protoc` version required is `>3.6.1`. The APT version on Ubuntu 20.04 is `3.6.1` which will likely throw this error - `error: "protoc failed: Unknown flag: --experimental_allow_proto3_optional\n"`. Please this [issue](https://github.com/LooseLab/Icarust/issues/2#issuecomment-1754836165) for a work around.
 
 #### Ubuntu
 
 ```bash
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y protobuf-compiler libprotobuf-dev
+sudo apt install -y protobuf-compiler libprotobuf-dev libhdf5-dev
 ```
 
 #### TLS - READ IF RUNNING WITH READFISH!
