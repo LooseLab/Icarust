@@ -137,8 +137,8 @@ pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
             sim_type: SimType::DNAR10,
         },
         SimType::RNAR9 => SimSettings {
-            digitisation: 2048.0,
-            range: 200.0,
+            digitisation: 8192.0,
+            range: 1158.63,
             samples_per_base: 43,
             kmer_len: 5,
             noise: true,
@@ -217,7 +217,7 @@ pub fn generate_prefix() -> Result<Vec<i16>, Box<dyn Error>> {
 /// Replace all occurences of a character in a string with a randomly chosen A,C,G, or T.
 ///  Used to remove Ns from reference.
 /// If char to replace is None, We actually replace anything that is not a base
-fn replace_char_with_base(string: &str, char_to_replace: Option<char>) -> String {
+fn replace_char_with_base(string: &str, _char_to_replace: Option<char>) -> String {
     let mut rng: rand::rngs::ThreadRng = rand::thread_rng();
 
     let replaced_string: String = string
