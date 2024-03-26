@@ -1,0 +1,23 @@
+output_path = "/tmp/"
+target_yield = 100000000000
+working_pore_percent = 100
+pore_type = "R9"
+nucleotide_type = "RNA"
+
+[parameters]
+sample_name = "eno_2"
+experiment_name = "eno_2_transcript"
+flowcell_name = "FAQFAKE"
+experiment_duration_set = 4800
+device_id = "Bantersaurus"
+position = "centre_left"
+break_read_ms = 1000
+sample_rate = 3012
+
+[[sample]]
+name = "Human"
+input_genome = "/home/adoni5/Projects/Icarust/docker/squiggle_arrs/ENO2.fa"
+mean_read_length = 10000
+weight = 1
+# weights_files = ["docker/squiggle_arrs/gencode.v44.transcripts.wtc11.dist.json"]
+amplicon = true

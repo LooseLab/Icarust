@@ -193,7 +193,7 @@ pub struct DataServiceServicer {
     setup: Arc<Mutex<RunSetup>>,
     break_chunks_ms: u64,
     channel_size: usize,
-    sampling: u64,
+    sample_rate_hz: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1408,7 +1408,7 @@ impl DataServiceServicer {
 
         let working_pore_percent = config.get_working_pore_precent();
         let break_chunks_ms: u64 = config.parameters.get_chunk_size_ms();
-        let sampling: u64 = config.parameters.get_sample_rate();
+        let sample_rate_hz: u64 = config.parameters.get_sample_rate();
         let start_time: u64 = Utc::now().timestamp() as u64;
         let barcode_squig = create_barcode_squig_hashmap(&config);
         info!("Barcodes available {:#?}", barcode_squig.keys());
@@ -1445,7 +1445,7 @@ impl DataServiceServicer {
             // Infinte loop for data generation
             loop {
                 let read_process = Instant::now();
-                debug!("Sequencer mock loop start");
+                // debug!("Sequencer mock loop start");
                 let mut new_reads = 0;
                 let mut dead_pores = 0;
                 let mut empty_pores = 0;
@@ -1532,7 +1532,7 @@ impl DataServiceServicer {
                                 &mut read_number,
                                 &start_time,
                                 &barcode_squig,
-                                sampling,
+                                sample_rate_hz,
                             )
                         }
                     }
@@ -1563,7 +1563,7 @@ impl DataServiceServicer {
             setup: is_safe_setup,
             break_chunks_ms,
             channel_size,
-            sampling,
+            sample_rate_hz,
         }
     }
 }
@@ -1587,8 +1587,8 @@ impl DataService for DataServiceServicer {
         let channel_size = self.channel_size;
         let mut stream_counter = 1;
         let break_chunk_ms = self.break_chunks_ms;
-        let sampling = self.sampling;
-        let chunk_size = break_chunk_ms as f64 / 1000.0 * sampling as f64;
+        let sample_rate_hz = self.sample_rate_hz;
+        // let chunk_size = break_chunk_ms as f64 / 1000.0 * sample_rate_hz as f64;
 
         // Stream the responses back
         let output = async_stream::try_stream! {
@@ -1617,8 +1617,8 @@ impl DataService for DataServiceServicer {
                     let mut channel: u32 = 1;
                     let mut num_reads_stop_receiving: usize = 0;
                     let mut num_channels_empty: usize = 0;
-                    // max read len in samples that we will consider sending samples for
-                    let max_read_len_samples: usize = 30000;
+                    // max read len in samples that we will consider sending samples for, 3 seconds worth of data
+                    let max_read_len_samples: usize = 3 * sample_rate_hz as usize;
 
                     // calculate number of samples to slice - roughly the time we break reads * 4000, so for the default 0.4 seconds
                     // we serve 0.4 * 4000 (1600) samples
@@ -1636,40 +1636,32 @@ impl DataService for DataServiceServicer {
                         // Iterate over each channel
                         for i in 0..channel_size {
                             let mut read_info = read_data_vec.get_mut(i).unwrap();
-                            debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
+                            // debug!("Elapsed at start of drain {}", now2.elapsed().as_millis());
                             if !read_info.stop_receiving && !read_info.was_unblocked && read_info.read.len() > 0 {
                                 // work out where to start and stop our slice of signal
-                                let mut start = read_info.prev_chunk_start;
+                                let mut start: usize = read_info.prev_chunk_start;
                                 let now_time = Utc::now();
-                                let read_start_time = read_info.start_time_utc;
-                                let elapsed_time = now_time.time() - read_start_time.time();
+                                let previous_access_time = read_info.time_accessed;
+                                let elapsed_time = now_time.time() - previous_access_time.time();
                                 // How far through the read we are in total samples
-                                let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
+                                // Convert sample_rate_hz into microseconds
+                                let chunk_to_serve_length: usize = ((sample_rate_hz as f64 / 1_000_000_f64)  * elapsed_time.num_microseconds().unwrap() as f64) as usize;
+                                let stop = start + chunk_to_serve_length as usize;
+                                info!("elasped: {elapsed_time}, start {start}, length {chunk_to_serve_length}, stop: {stop}");
+                                // let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
                                 // slice of signal is too short
-                                if start > stop || (stop - start) < chunk_size as usize {
+                                if start > stop || (stop - start) < chunk_to_serve_length as usize {
                                     continue
                                 }
 
                                 // Read through pore is too long ( roughly longer than 4.5kb worth of bases through pore
-                                if stop > max_read_len_samples {
+                                if chunk_to_serve_length > max_read_len_samples {
+                                    debug!("Skipping read as {chunk_to_serve_length} is greater than maximum allowed value {max_read_len_samples}");
                                     continue
-                                }
-
-                                // only send last chunks worth of data
-                                if  (stop - start) > (chunk_size as f64 * 1.1_f64) as usize {
-                                    // Work out where a break_reads size finishes
-                                    // i.e if we have gotten 1.5 chunks worth since last time, that is not actually possible on a real sequencer.
-                                    // So we need to calculate where the 1 chunk finishes and set that as the prev_chunk_stop and serve it
-                                    let full_width = stop - start;
-                                    let chunks_in_width = full_width.div_euclid(chunk_size as usize);
-                                    stop = chunk_size as usize * chunks_in_width;
-                                    start = stop - chunk_size as usize;
-                                    if start > read_info.read.len() {
-                                        start = read_info.read.len() - 1000;
-                                    }
                                 }
                                 // CHeck start is not past end
                                 if start > read_info.read.len() {
+                                    info!("Skipping as start {start} is greater than read signal lenth {}", read_info.read.len());
                                     continue
                                 }
 
