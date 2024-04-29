@@ -329,6 +329,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Error reading channel size from config.ini.")
         .try_into()
         .unwrap();
+
+    let sample_rate = config.parameters.sample_rate.unwrap_or(5000) as u32;
     // Create the manager server and add the service to it
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
@@ -365,7 +367,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_svc = LogServiceServer::new(Log {});
     let instance_svc = InstanceServiceServer::new(Instance {});
     let analysis_svc = AnalysisConfigurationServiceServer::new(Analysis {});
-    let device_svc = DeviceServiceServer::new(Device::new(channel_size));
+    let device_svc = DeviceServiceServer::new(Device::new(channel_size, sample_rate));
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {
         run_id: run_id.clone(),
     });
