@@ -1647,7 +1647,7 @@ impl DataService for DataServiceServicer {
                                 // Convert sample_rate_hz into microseconds
                                 let chunk_to_serve_length: usize = ((sample_rate_hz as f64 / 1_000_000_f64)  * elapsed_time.num_microseconds().unwrap() as f64) as usize;
                                 let stop = start + chunk_to_serve_length as usize;
-                                info!("elasped: {elapsed_time}, start {start}, length {chunk_to_serve_length}, stop: {stop}");
+                                debug!("elasped: {elapsed_time}, start {start}, length {chunk_to_serve_length}, stop: {stop}");
                                 // let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
                                 // slice of signal is too short
                                 if start > stop || (stop - start) < chunk_to_serve_length as usize {
@@ -1661,7 +1661,7 @@ impl DataService for DataServiceServicer {
                                 }
                                 // CHeck start is not past end
                                 if start > read_info.read.len() {
-                                    info!("Skipping as start {start} is greater than read signal lenth {}", read_info.read.len());
+                                    warn!("Skipping as start {start} is greater than read signal lenth {}", read_info.read.len());
                                     continue
                                 }
 
