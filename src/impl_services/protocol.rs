@@ -7,7 +7,7 @@ use tonic::{Request, Response, Status};
 use crate::services::minknow_api::protocol::protocol_service_server::ProtocolService;
 use crate::services::minknow_api::protocol::{
     protocol_info, protocol_info::TagValue, GetCurrentProtocolRunRequest, GetRunInfoRequest,
-    ProtocolInfo, ProtocolRunInfo,
+    GetVersionInfoResponse, ProtocolInfo, ProtocolRunInfo,
 };
 
 pub struct ProtocolServiceServicer {
@@ -30,18 +30,6 @@ impl ProtocolService for ProtocolServiceServicer {
         &self,
         _request: Request<GetCurrentProtocolRunRequest>,
     ) -> Result<Response<ProtocolRunInfo>, Status> {
-        let meta_info = ProtocolInfo {
-            identifier: String::from("insert_sequencing_kit_toml_name_here"),
-            name: String::from("sequencing_toml_file_name"),
-            tag_extraction_result: None,
-            tags: HashMap::from([(
-                String::from("barcoding"),
-                TagValue {
-                    tag_value: Some(protocol_info::tag_value::TagValue::BoolValue(true)),
-                },
-            )]),
-        };
-
         Ok(Response::new(ProtocolRunInfo {
             run_id: self.run_id.clone(),
             protocol_id: "IAMAPROTOCOL".to_string(),
@@ -129,7 +117,16 @@ impl ProtocolService for ProtocolServiceServicer {
             associated_post_processing_analysis: Vec::new(),
             pqc_result: None,
             external_offload: None,
-            software_versions: None,
+            software_versions: Some(GetVersionInfoResponse {
+                minknow: None,
+                distribution_status: 0,
+                bream: "-1".to_string(),
+                distribution_version: "unknown".to_string(),
+                protocol_configuration: "0.0.0".to_string(),
+                installation_type: 0,
+                guppy_build_version: "7.3.9".to_string(),
+                guppy_connected_version: "7.3.9".to_string(),
+            }),
             stop_origin: None,
         }))
     }
