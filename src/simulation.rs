@@ -321,10 +321,7 @@ pub fn convert_to_signal<'a>(
     if profile.noise & (profile.sim_type == SimType::DNAR10) {
         add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt());
     }
-    let mut signal_vec: Vec<i16> = signal_vec
-        .iter()
-        .map(|x| ((x * profile.digitisation) / profile.range) as i16)
-        .collect();
+    let mut signal_vec: Vec<i16> = signal_vec.iter_mut().map(|x| *x as i16).collect();
     if profile.reverse {
         signal_vec.reverse();
     }
