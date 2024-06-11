@@ -12,7 +12,7 @@ flowcell_name = "FAQ1234"
 experiment_duration_set = 4800
 device_id = "Bantersaurus"
 position = "FenceSitter"
-sample_rate = 4000
+sample_rate = 5000
 
 [[sample]]
 name = "Bacteria 1"
