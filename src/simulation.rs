@@ -330,8 +330,8 @@ pub fn convert_to_signal<'a>(
         add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt());
     }
     let mut signal_vec: Vec<i16> = signal_vec
-        .iter()
-        .map(|x| ((x / profile.scale) - profile.offset) as i16)
+        .iter_mut()
+        .map(|x| ((*x / profile.scale) - profile.offset) as i16)
         .collect();
     if profile.reverse {
         signal_vec.reverse();
