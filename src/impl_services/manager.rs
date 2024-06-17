@@ -44,7 +44,7 @@ impl ManagerService for Manager {
             guppy_connected_version: String::from("6hopefully"),
         }))
     }
-
+    #[allow(clippy::diverging_sub_expression)]
     async fn describe_host(
         &self,
         _request: Request<DescribeHostRequest>,

@@ -14,12 +14,12 @@ sample_rate = 4000
 
 [[sample]]
 name = "Bacteria 1"
-input_genome = "squiggle_arrs/NC_002516.2.squiggle.npy"
+input_genome = "squiggle_arrs/mixed_ref_r9/NC_002516.2.squiggle.npy"
 mean_read_length = 20000
 weight = 1
 
 [[sample]]
 name = "Bacteria 2"
-input_genome = "squiggle_arrs/NC_003997.3.squiggle.npy"
+input_genome = "squiggle_arrs/mixed_ref_r9/NC_003997.3.squiggle.npy"
 mean_read_length = 15000
 weight = 2

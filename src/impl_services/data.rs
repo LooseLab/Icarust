@@ -417,8 +417,8 @@ fn start_write_out_thread(
                 Some(RunInfoData {
                     acquisition_id: run_id.clone(),
                     acquisition_start_time: 1625097600000,
-                    adc_max: 32767,
-                    adc_min: -32768,
+                    adc_max: 2047,
+                    adc_min: 0,
                     context_tags: context_tags
                         .iter()
                         .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -525,8 +525,8 @@ fn start_write_out_thread(
                             ]);
                             let channel_info = ChannelInfo::new(
                                 2048_f64,
-                                0.0,
-                                200.0,
+                                -243.0,
+                                2048.0 * 0.1462070643901825,
                                 config.parameters.get_sample_rate() as f64,
                                 to_write_info.channel_number.clone(),
                             );
@@ -558,8 +558,8 @@ fn start_write_out_thread(
                                 signal_: signal,
                                 channel: to_write_info.channel as u16,
                                 well: 1,
-                                calibration_offset: -264.0,
-                                calibration_scale: 0.187_069_85,
+                                calibration_offset: -243.0,
+                                calibration_scale: 0.14620706,
                                 read_number: to_write_info.read_number,
                                 start: 1,
                                 median_before: 100.0,
@@ -1294,7 +1294,7 @@ fn generate_read(
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
     let sample_choice: &String = &samples[dist.sample(rng)];
-    value.read_sample_name = sample_choice.clone();
+    value.read_sample_name.clone_from(sample_choice);
     let sample_info: &SampleInfo = &views[sample_choice];
     // choose a barcode if we need to - else we always use the first distirbution in the vec
     let mut file_weight_choice: usize = 0;
@@ -1520,7 +1520,7 @@ impl DataServiceServicer {
                             continue;
                         }
                         // chance to aquire a read
-                        if rng.gen_bool(0.8) {
+                        if rng.gen_bool(0.75) {
                             new_reads += 1;
                             read_number += 1;
                             generate_read(
@@ -1647,7 +1647,7 @@ impl DataService for DataServiceServicer {
                                 // Convert sample_rate_hz into microseconds
                                 let chunk_to_serve_length: usize = ((sample_rate_hz as f64 / 1_000_000_f64)  * elapsed_time.num_microseconds().unwrap() as f64) as usize;
                                 let stop = start + chunk_to_serve_length as usize;
-                                info!("elasped: {elapsed_time}, start {start}, length {chunk_to_serve_length}, stop: {stop}");
+                                debug!("elasped: {elapsed_time}, start {start}, length {chunk_to_serve_length}, stop: {stop}");
                                 // let mut stop = convert_milliseconds_to_samples(elapsed_time.num_milliseconds(), sampling);
                                 // slice of signal is too short
                                 if start > stop || (stop - start) < chunk_to_serve_length as usize {
@@ -1661,7 +1661,7 @@ impl DataService for DataServiceServicer {
                                 }
                                 // CHeck start is not past end
                                 if start > read_info.read.len() {
-                                    info!("Skipping as start {start} is greater than read signal lenth {}", read_info.read.len());
+                                    warn!("Skipping as start {start} is greater than read signal lenth {}", read_info.read.len());
                                     continue
                                 }
 

@@ -1,13 +1,14 @@
 output_path = "/tmp/"
 global_mean_read_length = 15000
 target_yield = 100000000000
-working_pore_percent = 85
+working_pore_percent = 100
 pore_type = "R10"
 nucleotide_type = "DNA"
+random_seed = 9
 
 [parameters]
-sample_name = "test"
-experiment_name = "test_2_bacteria"
+sample_name = "thesis_barcode_weights"
+experiment_name = "thesis_barcode_weights"
 flowcell_name = "FAQ1234"
 experiment_duration_set = 4800
 device_id = "Bantersaurus"

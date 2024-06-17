@@ -29,6 +29,7 @@ use chrono::prelude::*;
 use clap::Parser;
 use configparser::ini::Ini;
 use serde::Deserialize;
+use simulation::SimType;
 use std::collections::HashMap;
 use std::fs;
 use std::net::SocketAddr;
@@ -329,6 +330,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Error reading channel size from config.ini.")
         .try_into()
         .unwrap();
+
+    let sample_rate = config.parameters.sample_rate.unwrap_or(5000) as u32;
+
+    let sim_type = match (config.check_dna_or_rna(), config.check_pore_type()) {
+        (NucleotideType::DNA, PoreType::R10) => SimType::DNAR10,
+        (NucleotideType::RNA, PoreType::R9) => SimType::RNAR9,
+        _ => {
+            panic!("We shouldn't be readig sequence for R10 RNA or R9DNA");
+        }
+    };
+    let profile = simulation::get_sim_profile(sim_type);
+    let digitisation = profile.digitisation;
+    let range = profile.range as f32;
+    let offset = profile.offset as f32;
+    let scale = profile.scale as f32;
     // Create the manager server and add the service to it
     let manager_init = Manager {
         positions: vec![FlowCellPosition {
@@ -365,7 +381,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let log_svc = LogServiceServer::new(Log {});
     let instance_svc = InstanceServiceServer::new(Instance {});
     let analysis_svc = AnalysisConfigurationServiceServer::new(Analysis {});
-    let device_svc = DeviceServiceServer::new(Device::new(channel_size));
+    let device_svc = DeviceServiceServer::new(Device::new(
+        channel_size,
+        sample_rate,
+        offset,
+        range,
+        digitisation,
+    ));
     let acquisition_svc = AcquisitionServiceServer::new(Acquisition {
         run_id: run_id.clone(),
     });
