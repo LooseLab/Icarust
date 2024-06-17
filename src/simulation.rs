@@ -18,6 +18,7 @@ use probability::prelude::*;
 use rand::prelude::*;
 use rand::seq::SliceRandom;
 use rand_distr::Normal;
+use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::error::Error;
@@ -266,14 +267,12 @@ pub fn sequence_lengths<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Vec<usize>
 }
 
 /// Add laplace noise to each sample for a whole signal
-fn add_laplace_noise(data: &mut [f64], scale: f64) {
-    let laplace = Laplace::new(0.0, scale);
-    let mut source = source::default(42);
-    let mut sampler = Independent(&laplace, &mut source);
-    for value in data {
-        let noise: f64 = sampler.next().unwrap();
-        *value += noise;
-    }
+fn add_laplace_noise<'a>(
+    data: &mut f64,
+    sampler: &mut Independent<&'a Laplace, &'a mut source::Default>,
+) {
+    let noise: f64 = sampler.next().unwrap();
+    *data += noise;
 }
 
 /// Add Gaussian noise to each sample individual, for RNA
@@ -302,6 +301,10 @@ pub fn convert_to_signal<'a>(
     .progress_chars("##-");
     let pb: ProgressBar = ProgressBar::new(num_kmers.try_into().unwrap());
     pb.set_style(sty);
+    let laplace: Laplace = Laplace::new(0.0, 1.0 / 2.0f64.sqrt());
+    let mut source = source::default(42);
+    let mut sampler: Independent<&Laplace, &mut source::Default> =
+        Independent(&laplace, &mut source);
     let mut rng = StdRng::seed_from_u64(123);
 
     for kmer in r.kmers(kmer_len as u8) {
@@ -322,15 +325,16 @@ pub fn convert_to_signal<'a>(
             if profile.noise & (profile.sim_type == SimType::RNAR9) {
                 add_gaussian_noise(&mut x, value.1.unwrap(), &mut rng)
             }
+            if profile.noise & (profile.sim_type == SimType::DNAR10) {
+                add_laplace_noise(&mut x, &mut sampler);
+            }
             signal_vec.push(x);
         }
         pb.inc(1);
     }
-    if profile.noise & (profile.sim_type == SimType::DNAR10) {
-        add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt());
-    }
+
     let mut signal_vec: Vec<i16> = signal_vec
-        .iter_mut()
+        .par_iter_mut()
         .map(|x| ((*x / profile.scale) - profile.offset) as i16)
         .collect();
     if profile.reverse {
