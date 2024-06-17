@@ -1294,7 +1294,7 @@ fn generate_read(
     value.start_time_utc = Utc::now();
     value.read_number = *read_number;
     let sample_choice: &String = &samples[dist.sample(rng)];
-    value.read_sample_name = sample_choice.clone();
+    value.read_sample_name.clone_from(sample_choice);
     let sample_info: &SampleInfo = &views[sample_choice];
     // choose a barcode if we need to - else we always use the first distirbution in the vec
     let mut file_weight_choice: usize = 0;
