@@ -19,13 +19,25 @@ use tonic::{Request, Response, Status};
 pub struct Device {
     channel_size: usize,
     sample_rate: u32,
+    offset: f32,
+    range: f32,
+    digitisation: u32,
 }
 
 impl Device {
-    pub fn new(channel_size: usize, sample_rate: u32) -> Device {
+    pub fn new(
+        channel_size: usize,
+        sample_rate: u32,
+        offset: f32,
+        range: f32,
+        digitisation: u32,
+    ) -> Device {
         Device {
             channel_size,
             sample_rate,
+            offset,
+            range,
+            digitisation,
         }
     }
 }
@@ -40,14 +52,10 @@ impl DeviceService for Device {
         let channels: u32 = request_values.last_channel - request_values.first_channel + 1;
         // explicitly convert to usize from u32
         let n_us = usize::try_from(channels).unwrap();
-        let mut offsets = vec![0.0];
-        // resize in place
-        offsets.resize(n_us, 0.0);
-        let mut pa_ranges = vec![1.0];
-        // resize in place
-        pa_ranges.resize(n_us, 1.0);
+        let offsets = vec![self.offset; n_us];
+        let pa_ranges = vec![self.range; n_us];
         return Ok(Response::new(device::GetCalibrationResponse {
-            digitisation: 1,
+            digitisation: self.digitisation,
             offsets,
             pa_ranges,
             has_calibration: true,

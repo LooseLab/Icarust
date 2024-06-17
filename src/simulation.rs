@@ -94,9 +94,13 @@ pub enum KmerType {
 /// Profile for sequencing
 pub struct SimSettings {
     /// Digitisation to i16 I dunno
-    digitisation: f64,
+    pub digitisation: u32,
     /// range
-    range: f64,
+    pub range: f64,
+    /// scale
+    pub scale: f64,
+    /// offset
+    pub offset: f64,
     /// samples_per_base
     samples_per_base: i16,
     /// kmer
@@ -128,17 +132,21 @@ const RANDOM_CHARS: [char; 4] = ['A', 'C', 'G', 'T'];
 pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
     match sim_type {
         SimType::DNAR10 => SimSettings {
-            digitisation: 2048.0,
-            range: 200.0,
-            samples_per_base: 10,
+            digitisation: 2048,
+            scale: 0.1462070643901825,
+            range: 2048.0 * 0.1462070643901825, // Digitisation * scale
+            offset: -243.0,
+            samples_per_base: 12,
             kmer_len: 9,
             noise: true,
             reverse: false,
             sim_type: SimType::DNAR10,
         },
         SimType::RNAR9 => SimSettings {
-            digitisation: 8192.0,
+            digitisation: 8192,
+            scale: 1.0,
             range: 1158.63,
+            offset: 0.0,
             samples_per_base: 43,
             kmer_len: 5,
             noise: true,
@@ -151,7 +159,7 @@ pub fn get_sim_profile(sim_type: SimType) -> SimSettings {
     }
 }
 
-///
+///is it an RNA read
 pub fn get_is_rna(sim_type: SimType) -> bool {
     matches!(sim_type, SimType::RNAR9)
 }
@@ -321,15 +329,13 @@ pub fn convert_to_signal<'a>(
     if profile.noise & (profile.sim_type == SimType::DNAR10) {
         add_laplace_noise(&mut signal_vec, 1.0 / 2.0f64.sqrt());
     }
-    let mut signal_vec: Vec<i16> = signal_vec.iter_mut().map(|x| *x as i16).collect();
+    let mut signal_vec: Vec<i16> = signal_vec
+        .iter()
+        .map(|x| ((x / profile.scale) - profile.offset) as i16)
+        .collect();
     if profile.reverse {
         signal_vec.reverse();
     }
     pb.finish_with_message("done");
     Ok(signal_vec)
 }
-
-// read_tag, u32
-// read_id
-// raw_data
-// daq_offset
