@@ -1437,6 +1437,7 @@ impl DataServiceServicer {
         // start the thread to generate data
         thread::spawn(move || {
             let r: ReacquisitionPoisson = ReacquisitionPoisson::new(1.0, 0.0, 0.0001, 0.05);
+            let _experiment_duration = config.parameters.experiment_duration_set;
 
             // read number for adding to unblock
             let mut read_number: u32 = 0;
@@ -1444,6 +1445,19 @@ impl DataServiceServicer {
 
             // Infinte loop for data generation
             loop {
+                if let Some(_experiment_duration) = _experiment_duration {
+                    // The experiment length in minutes
+                    let minutes_since_start = (Utc::now().timestamp() as u64 - start_time) / 60;
+                    if std::convert::TryInto::<usize>::try_into(minutes_since_start).unwrap()
+                        > _experiment_duration
+                    {
+                        info!("Reached experiment duration, stopping...");
+                        {
+                            *graceful_shutdown.lock().unwrap() = true;
+                        }
+                        break;
+                    }
+                }
                 let read_process = Instant::now();
                 // debug!("Sequencer mock loop start");
                 let mut new_reads = 0;
@@ -1555,6 +1569,8 @@ impl DataServiceServicer {
                     break;
                 }
             }
+            std::thread::sleep(Duration::from_secs(10));
+            std::process::exit(0);
         });
         // return our newly initialised DataServiceServicer to add onto the GRPC server
         DataServiceServicer {
