@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 lazy_static! {
     static ref HASHSET: FnvHashSet<char> = {
@@ -290,8 +291,10 @@ pub fn convert_to_signal<'a>(
 ) -> Result<Vec<i16>, Box<dyn Error>> {
     let samples_per_base = profile.samples_per_base;
     let kmer_len = profile.kmer_len;
-    let mut signal_vec: Vec<f64> =
-        Vec::with_capacity(record.num_bases() * samples_per_base as usize);
+    println!("{}", record.num_bases() * samples_per_base as usize);
+    let signal_vec = Arc::new(Mutex::new(Vec::with_capacity(
+        record.num_bases() * samples_per_base as usize,
+    )));
     let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
     let num_kmers: usize = r.len() - (kmer_len as usize);
     let sty = ProgressStyle::with_template(
@@ -303,40 +306,45 @@ pub fn convert_to_signal<'a>(
     pb.set_style(sty);
     let laplace: Laplace = Laplace::new(0.0, 1.0 / 2.0f64.sqrt());
     let mut source = source::default(42);
-    let mut sampler: Independent<&Laplace, &mut source::Default> =
-        Independent(&laplace, &mut source);
-    let mut rng = StdRng::seed_from_u64(123);
-
-    for kmer in r.kmers(kmer_len as u8) {
+    let sampler = Arc::new(Mutex::new(Independent(&laplace, &mut source)));
+    let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(123)));
+    r.kmers(kmer_len as u8).par_bridge().for_each(|kmer| {
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
         kmer = replace_char_with_base(&kmer, None);
-        let value = kmers.get(&kmer.to_uppercase()).unwrap_or_else(|| {
+        let kmer_upper = kmer.to_uppercase();
+        let value = kmers.get(&kmer_upper).unwrap_or_else(|| {
             panic!(
-                "failed to retrieve value for kmer {kmer}, on contig{}",
+                "failed to retrieve value for kmer {}, on contig {}",
+                kmer,
                 String::from_utf8(record.id().to_vec()).unwrap()
             )
         });
 
-        // N sampling for each base (sample_rate / bases per second )
-        // This could also be worked out from profile.dwell_mean
-        // Iterate and push samples into the signal_vec
+        let mut local_signal_vec = vec![];
         for _ in 0..samples_per_base {
             let mut x = value.0;
             if profile.noise & (profile.sim_type == SimType::RNAR9) {
+                let mut rng = rng.lock().unwrap();
                 add_gaussian_noise(&mut x, value.1.unwrap(), &mut rng)
             }
             if profile.noise & (profile.sim_type == SimType::DNAR10) {
+                let mut sampler = sampler.lock().unwrap();
                 add_laplace_noise(&mut x, &mut sampler);
             }
-            signal_vec.push(x);
+            local_signal_vec.push(x);
         }
+
+        let mut signal_vec = signal_vec.lock().unwrap();
+        signal_vec.extend(local_signal_vec);
         pb.inc(1);
-    }
+    });
+    let mut signal_vec = signal_vec.lock().unwrap();
 
     let mut signal_vec: Vec<i16> = signal_vec
         .par_iter_mut()
         .map(|x| ((*x / profile.scale) - profile.offset) as i16)
         .collect();
+    signal_vec.shrink_to_fit();
     if profile.reverse {
         signal_vec.reverse();
     }
