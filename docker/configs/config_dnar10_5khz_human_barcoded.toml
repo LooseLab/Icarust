@@ -1,4 +1,4 @@
-output_path = "/data/projects/rory_says_hi/readfish_update_paper"
+output_path = "/tmp/"
 target_yield = 100000000000
 working_pore_percent = 80
 pore_type = "R10"
