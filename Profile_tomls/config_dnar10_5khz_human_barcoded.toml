@@ -1,4 +1,4 @@
-output_path = "/data/projects/rory_says_hi/readfish_update_paper"
+output_path = "/tmp"
 target_yield = 100000000000
 working_pore_percent = 80
 pore_type = "R10"
@@ -8,7 +8,7 @@ nucleotide_type = "DNA"
 sample_name = "human_barcoded"
 experiment_name = "test_timings_grid_builtin"
 flowcell_name = "PAS000000"
-experiment_duration_set = 120
+experiment_duration_set = 4800
 device_id = "Bantersaurus"
 position = "FenceSitter"
 sample_rate = 5000
@@ -16,7 +16,7 @@ break_read_ms = 800
 
 [[sample]]
 name = "Bacteria 1"
-input_genome = "/data/projects/rory_says_hi/hg38_no_alts.part_NC_000001.11 Homo sapiens chromosome 1, GRCh38.p14 Primary Assembly.fa.gz"
+input_genome = "docker/squiggle_arrs/hg38_chr20.fa.gz"
 #input_genome = "/data/refs/hg38.p14.simple.fa"
 #input_genome = "/data/projects/rory_says_hi/Icarust/docker/squiggle_arrs/mixed_ref.fa"
 mean_read_length = 10000
