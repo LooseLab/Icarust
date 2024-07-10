@@ -25,6 +25,7 @@ use std::error::Error;
 use std::fs::File;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 lazy_static! {
     static ref HASHSET: FnvHashSet<char> = {
@@ -292,9 +293,8 @@ pub fn convert_to_signal<'a>(
     let samples_per_base = profile.samples_per_base;
     let kmer_len = profile.kmer_len;
     println!("{}", record.num_bases() * samples_per_base as usize);
-    // let signal_vec = Arc::new(Mutex::new(Vec::with_capacity(
-    //     record.num_bases() * samples_per_base as usize,
-    // )));
+    let mut signal_vec: Vec<f64> =
+        Vec::with_capacity(record.num_bases() * samples_per_base as usize);
     let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
     let num_kmers: usize = r.len() - (kmer_len as usize);
     let sty = ProgressStyle::with_template(
@@ -308,7 +308,8 @@ pub fn convert_to_signal<'a>(
     let mut source = source::default(42);
     let sampler = Arc::new(Mutex::new(Independent(&laplace, &mut source)));
     let rng = Arc::new(Mutex::new(StdRng::seed_from_u64(123)));
-    let mut signal_vec: Vec<f64> = r
+    let start_time = Instant::now();
+    signal_vec = r
         .kmers(kmer_len as u8)
         .par_bridge()
         .map(|kmer| {
@@ -342,7 +343,8 @@ pub fn convert_to_signal<'a>(
         })
         .flatten()
         .collect();
-
+    let elapsed_time = start_time.elapsed();
+    println!("For loop elapsed time: {:.2?}", elapsed_time);
     let mut signal_vec: Vec<i16> = signal_vec
         .par_iter_mut()
         .map(|x| ((*x / profile.scale) - profile.offset) as i16)
