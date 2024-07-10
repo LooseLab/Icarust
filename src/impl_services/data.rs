@@ -548,10 +548,13 @@ fn start_write_out_thread(
                             } else {
                                 EndReason::SIGNAL_POSITIVE
                             };
-                            let pt = match ic_pt {
-                                PoreType::R9 => PodPoreType::R9,
-                                PoreType::R10 => PodPoreType::R10,
-                            };
+                            // Apparently, MinKNOW doesn't set this - or specifically it is set to
+                            // not-set, so we will match that.
+                            // let pt = match ic_pt {
+                            //     PoreType::R9 => PodPoreType::R9,
+                            //     PoreType::R10 => PodPoreType::R10,
+                            // };
+                            let pt = PodPoreType::NotSet;
                             let read: PodReadInfo = PodReadInfo {
                                 read_id: Uuid::parse_str(to_write_info.read_id.as_str()).unwrap(),
                                 pore_type: pt,
