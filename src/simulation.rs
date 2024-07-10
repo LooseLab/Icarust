@@ -305,6 +305,7 @@ pub fn convert_to_signal<'a>(
     let mut sampler: Independent<&Laplace, &mut source::Default> =
         Independent(&laplace, &mut source);
     let mut rng = StdRng::seed_from_u64(123);
+    info!("samples per base {samples_per_base} {}", signal_vec.len());
 
     for kmer in r.kmers(kmer_len as u8) {
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
@@ -336,9 +337,11 @@ pub fn convert_to_signal<'a>(
         .par_iter_mut()
         .map(|x| ((*x / profile.scale) - profile.offset) as i16)
         .collect();
+    signal_vec.shrink_to_fit();
     if profile.reverse {
         signal_vec.reverse();
     }
+    info!("samples per base {samples_per_base} {}", signal_vec.len());
     pb.finish_with_message("done");
     Ok(signal_vec)
 }
