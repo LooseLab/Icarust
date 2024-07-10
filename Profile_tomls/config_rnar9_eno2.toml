@@ -13,6 +13,8 @@ device_id = "Bantersaurus"
 position = "centre_left"
 break_read_ms = 1000
 sample_rate = 3012
+sequencing_speed = 70
+
 
 [[sample]]
 name = "Human"

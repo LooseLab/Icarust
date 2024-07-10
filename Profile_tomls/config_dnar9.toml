@@ -11,6 +11,7 @@ experiment_duration_set = 4800
 device_id = "Bantersaurus"
 position = "FenceSitter"
 sample_rate = 4000
+sequencing_speed = 450
 
 [[sample]]
 name = "Bacteria 1"

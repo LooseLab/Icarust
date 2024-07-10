@@ -12,11 +12,12 @@ experiment_duration_set = 4800
 device_id = "Mechamaru"
 position = "Kyoto"
 sample_rate = 3000
+sequencing_speed = 70
 
 [[sample]]
 name = "Human"
-input_genome = "docker/squiggle_arrs/gencode.v44.transcripts.wtc11.fa"
+input_genome = "/squiggle_arrs/gencode.v44.transcripts.wtc11.fa"
 mean_read_length = 1300
 weight = 1
-weights_files = ["docker/squiggle_arrs/gencode.v44.transcripts.wtc11.dist.json"]
+weights_files = ["/squiggle_arrs/gencode.v44.transcripts.wtc11.dist.json"]
 amplicon = true
