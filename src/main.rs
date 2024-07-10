@@ -206,6 +206,8 @@ struct Parameters {
     break_read_ms: Option<u64>,
     /// The sample rate in Hz - one of 4000 or 5000. Only used for RNA R9 and DNA R10
     sample_rate: Option<u64>,
+    /// The sequencing speed is an absolute banger
+    sequencing_speed: Option<usize>,
 }
 
 impl Parameters {
@@ -213,12 +215,15 @@ impl Parameters {
     pub fn get_chunk_size_ms(&self) -> u64 {
         self.break_read_ms.unwrap_or(400)
     }
-}
 
-impl Parameters {
     /// Return the sample rate (hz) of the signal in pores. If not specified, returns 4000.
     pub fn get_sample_rate(&self) -> u64 {
         self.sample_rate.unwrap_or(4000)
+    }
+
+    /// Return the sample rate (hz) of the signal in pores. If not specified, returns 4000.
+    pub fn get_sequencing_speed(&self) -> usize {
+        self.sequencing_speed.unwrap_or(400)
     }
 }
 

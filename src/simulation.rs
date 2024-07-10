@@ -287,11 +287,10 @@ pub fn convert_to_signal<'a>(
     kmers: &FnvHashMap<String, (f64, Option<f64>)>,
     record: &SequenceRecord,
     profile: &SimSettings,
+    samples_per_base: usize,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
-    let samples_per_base = profile.samples_per_base;
     let kmer_len = profile.kmer_len;
-    let mut signal_vec: Vec<f64> =
-        Vec::with_capacity(record.num_bases() * samples_per_base as usize);
+    let mut signal_vec: Vec<f64> = Vec::with_capacity(record.num_bases() * samples_per_base);
     let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
     let num_kmers: usize = r.len() - (kmer_len as usize);
     let sty = ProgressStyle::with_template(
