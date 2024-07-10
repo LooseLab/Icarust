@@ -323,14 +323,14 @@ pub fn convert_to_signal<'a>(
                 )
             });
             let mut local_signal_vec = vec![];
+            let mut rng = rng.lock().unwrap();
+            let mut sampler = sampler.lock().unwrap();
             for _ in 0..samples_per_base {
                 let mut x = value.0;
                 if profile.noise & (profile.sim_type == SimType::RNAR9) {
-                    let mut rng = rng.lock().unwrap();
                     add_gaussian_noise(&mut x, value.1.unwrap(), &mut rng)
                 }
                 if profile.noise & (profile.sim_type == SimType::DNAR10) {
-                    let mut sampler = sampler.lock().unwrap();
                     add_laplace_noise(&mut x, &mut sampler);
                 }
                 local_signal_vec.push(x);
