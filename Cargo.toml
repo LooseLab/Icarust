@@ -37,10 +37,11 @@ fern = { version = "0.6.2", features = ["colored", "chrono"] }
 humantime = "2.1.0"
 lazy_static = "1.4.0"
 indicatif = "0.17.5"
-podders = "0.1.3"
+podders = "0.1.4"
 # podders = { git = "https://github.com/Adoni5/podders.git" }
 #podders = { path = "../podders" }
 probability = "0.20.3"
+rayon = "1.10.0"
 
 
 [build-dependencies]
