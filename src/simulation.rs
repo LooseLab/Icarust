@@ -287,11 +287,10 @@ pub fn convert_to_signal<'a>(
     kmers: &FnvHashMap<String, (f64, Option<f64>)>,
     record: &SequenceRecord,
     profile: &SimSettings,
+    samples_per_base: usize,
 ) -> Result<Vec<i16>, Box<dyn Error>> {
-    let samples_per_base = profile.samples_per_base;
     let kmer_len = profile.kmer_len;
-    let mut signal_vec: Vec<f64> =
-        Vec::with_capacity(record.num_bases() * samples_per_base as usize);
+    let mut signal_vec: Vec<f64> = Vec::with_capacity(record.num_bases() * samples_per_base);
     let r: Cow<'a, [u8]> = normalize(record.sequence()).unwrap().into();
     let num_kmers: usize = r.len() - (kmer_len as usize);
     let sty = ProgressStyle::with_template(
@@ -306,6 +305,7 @@ pub fn convert_to_signal<'a>(
     let mut sampler: Independent<&Laplace, &mut source::Default> =
         Independent(&laplace, &mut source);
     let mut rng = StdRng::seed_from_u64(123);
+    info!("samples per base {samples_per_base} {}", signal_vec.len());
 
     for kmer in r.kmers(kmer_len as u8) {
         let mut kmer = String::from_utf8(kmer.to_vec()).unwrap();
@@ -337,9 +337,11 @@ pub fn convert_to_signal<'a>(
         .par_iter_mut()
         .map(|x| ((*x / profile.scale) - profile.offset) as i16)
         .collect();
+    signal_vec.shrink_to_fit();
     if profile.reverse {
         signal_vec.reverse();
     }
+    info!("samples per base {samples_per_base} {}", signal_vec.len());
     pb.finish_with_message("done");
     Ok(signal_vec)
 }

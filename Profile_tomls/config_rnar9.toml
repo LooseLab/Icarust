@@ -12,6 +12,8 @@ experiment_duration_set = 4800
 device_id = "Mechamaru"
 position = "Kyoto"
 sample_rate = 3000
+sequencing_speed = 70
+
 
 [[sample]]
 name = "Human"

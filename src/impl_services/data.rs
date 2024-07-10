@@ -935,6 +935,7 @@ fn process_samples_from_config(
                         sample,
                         kmers.as_ref().unwrap(),
                         config.parameters.get_sample_rate(),
+                        config.parameters.get_sequencing_speed(),
                         config.check_pore_type(),
                         config.check_dna_or_rna(),
                     );
@@ -994,6 +995,7 @@ fn process_samples_from_config(
                     sample,
                     kmers.as_ref().unwrap(),
                     config.parameters.get_sample_rate(),
+                    config.parameters.get_sequencing_speed(),
                     config.check_pore_type(),
                     config.check_dna_or_rna(),
                 );
@@ -1116,6 +1118,7 @@ fn read_views_of_sequence_data(
     sample_info: &Sample,
     kmers: &HashMap<String, (f64, Option<f64>), std::hash::BuildHasherDefault<fnv::FnvHasher>>,
     sample_rate: u64,
+    sequencing_speed: usize,
     pore_type: PoreType,
     nucleotide_type: NucleotideType,
 ) {
@@ -1139,6 +1142,7 @@ fn read_views_of_sequence_data(
         parse_fastx_file(file_path).expect("Can't find FASTA file at {file_path}");
     let now = Instant::now();
     let mut done = 0;
+    let samples_per_base = sample_rate as usize / sequencing_speed;
     while let Some(record) = reader.next() {
         let per_record_now = Instant::now();
         let fasta_record = record.unwrap();
@@ -1149,7 +1153,10 @@ fn read_views_of_sequence_data(
         let read_length_dist = sample_info.get_read_len_dist(global_mean_read_length, sample_rate);
         let file_info = FileInfo::new(
             None,
-            Some(simulation::convert_to_signal(kmers, &fasta_record, &profile).unwrap()),
+            Some(
+                simulation::convert_to_signal(kmers, &fasta_record, &profile, samples_per_base)
+                    .unwrap(),
+            ),
         );
         let sample = views
             .entry(sample_info.name.clone())
