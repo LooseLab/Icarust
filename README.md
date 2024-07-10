@@ -133,6 +133,7 @@ The parameters are applied to the "sequencer". They are used to setup the GRPC s
 | position | string  | True | Position name. This has to match what readfish is looking for. |
 | break_read_ms | int | False | How many milliseconds to chunk reads into. Default 400. |
 | sample_rate | int | False | Sample rate in Hz. Default [4000]. Suggest 3000 for RNA, 4000 or 5000 for DNA otherwise Dorado will throw a Hissy fit. |
+| experiment_duration_set | int | False | Time in minutes to run the experiment for. |
 
 
 ### Sample
