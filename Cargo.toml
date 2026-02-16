@@ -26,7 +26,7 @@ ndarray-npy = { version = "0.8.1", default-features = false }
 ndarray = "0.15.0"
 memmap2 = "0.5.3"
 rm-frust5-api = "0.0.3"
-chrono = "0.4"
+chrono = "=0.4.31"
 byteorder = "1"
 clap = { version = "3.2.5", features = ["derive"] }
 configparser = "3.0.2"
